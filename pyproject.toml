@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "gudhi>=3.11.0",
+    "nbformat>=5.10.4",
     "numpy>=2.2.5",
     "persim>=0.3.8",
+    "plotly>=6.1.0",
     "ripser>=0.6.12",
     "umap-learn>=0.5.7",
 ]
