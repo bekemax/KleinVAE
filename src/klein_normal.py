@@ -68,11 +68,10 @@ class KleinNormal(MultivariateNormal):
         preimages_of_klein = preimage_of_klein(value)
         preimages_of_torus = preimage_of_torus_grid(preimages_of_klein)
         print(f"Preimages of Klein: {preimages_of_klein.shape}, Preimages of Torus: {preimages_of_torus.shape}")
-        # preimage_of_torus_recursive(preimages_of_klein, criterion=stop_criterion)
 
-        log_probs = [torch.log(torch.sum(torch.exp(super().log_prob(preimage)))) for preimage in preimages_of_torus]
-
-        return torch.Tensor(log_probs)  # torch.log(torch.sum(torch.exp(log_probs)))
+        flat_preimages = preimages_of_torus.view(-1, preimages_of_torus.shape[-1])
+        log_probs_all = super().log_prob(flat_preimages).view(preimages_of_torus.shape[:-1])
+        return torch.logsumexp(log_probs_all, dim=-1)
 
     def _create_stop_criterion(self, eps: float = 1e-6):
         """
