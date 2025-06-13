@@ -1,50 +1,52 @@
+from .utils import project_to_klein, preimage_of_klein, preimage_of_torus_grid
+
 import torch
-from torch.distributions import Normal, constraints
-
-from math import pi
+from torch.distributions import MultivariateNormal, constraints
 
 
-class KleinNormal(Normal):
+class KleinConstraint(constraints.Constraint):
+    def __init__(self):
+        super().__init__()
+
+    def check(self, value):
+        # value is [..., 2]
+        theta1 = value[..., 0]
+        theta2 = value[..., 1]
+        return (theta1 >= 0) & (theta1 < torch.pi) & (theta2 >= 0) & (theta2 < 2 * torch.pi)
+
+
+class KleinNormal(MultivariateNormal):
     """
-    A wrapped 2D Normal on the Klein bottle K, using (θ1, θ2) in the fundamental
-    rectangle [0, 2π) × [0, π) with the identifications:
-       (θ1, θ2) ~ (θ1 + 2πk, θ2 + 2πl)    for k,l ∈ Z  (usual torus gluing)
-       (θ1, θ2) ~ (θ1 + π, -θ2)         (the “half‐twist” that makes K non-orientable)
+    A wrapped 2D Normal on the Klein bottle K, using (theta1, theta2) in the fundamental rectangle [0, 2pi) x [0, pi)
+    with the following identifications:
+       (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l)    for k,l in Z (torus gluing)
+       (theta1, theta2) ~ (theta1 + pi, -theta1)              (the “half‐twist” that makes K non-orientable)
 
     We override only:
-      - .rsample()   → to draw (u,v) ∼ N(loc, scale) in ℝ² and then project to (φ1, φ2) ∈ [0,2π)×[0,π).
-      - .log_prob()  → to take any (θ1, θ2), re-project it to the canonical (φ1, φ2) in [0,2π)×[0,π), and
-                       then call Normal.log_prob((φ1, φ2)) in the covering space.
-
-    Everything else (entropy, expand, etc.) is inherited from torch.distributions.Normal.
+      - .rsample()   → to draw (u,v) ∼ N(loc, scale) in ℝ² and then project to a point on the Klein bottle
+      - .log_prob()  → to take any (theta1, theta2) on the Klein bottle, find its preimages [(x,y)],
+                       and for each preimage call Normal.log_prob((x, y)), then sum the results.
     """
-
-    support = constraints.real  # the parent Normal thinks in ℝ²; we reinterpret internally.
 
     def __init__(self, loc, scale, validate_args=False):
         """
-        loc:   Tensor of shape [2], giving the mean (u₀,v₀) ∈ ℝ² of the covering Gaussian.
-        scale: Tensor of shape [2], giving the std ‐dev in each coordinate of that covering Gaussian.
+        loc:   Tensor of shape [2], giving the mean (u,v) in R^2 of the covering Gaussian.
+        scale: Tensor of shape [2], giving the std ‐ dev in each coordinate of that covering Gaussian.
         """
-        super().__init__(loc, scale, validate_args=validate_args)
+        self.klein_support = KleinConstraint()
 
-    def _project_to_klein(self, u, v, eps: float = 1e-6):
-        """
-        Given u, v ∈ ℝ^*, project each pair (u, v) onto the fundamental domain
-        [0, 2π) × [0, π) of the Klein bottle by wrapping u and v according to the identifications:
-            - (θ1, θ2) ~ (θ1 + 2πk, θ2 + 2πl) for k,l ∈ Z    (usual torus gluing)
-            - (θ1, θ2) ~ (θ1 + π, -θ2)                       (the “half‐twist” that makes K non-orientable)
-        """
+        if not isinstance(loc, torch.Tensor) or loc.shape != (2,):
+            print(f"loc must be a tensor of shape [2].\nCreating a shape [2] tensor ({loc:.2f},{loc:.2f}).")
+            loc = torch.tensor([loc, loc], dtype=torch.float32)
+            print(f"loc = {loc}")
 
-        u_mod = torch.remainder(u, 2 * pi)
-        v_mod = torch.remainder(v, 2 * pi)
+        if not isinstance(scale, torch.Tensor) or scale.shape != (2,):
+            print(f"scale must be a tensor of shape [2].\nCreating a shape [2] tensor ({scale:.2f},{scale:.2f}).")
+            scale = torch.tensor([[scale, 0], [0, scale]], dtype=torch.float32)
+            print(f"scale = {scale}")
 
-        mask_twist = v_mod >= pi - eps
-        if mask_twist.any():
-            u_mod[mask_twist] = u_mod[mask_twist] - pi
-            v_mod[mask_twist] = torch.remainder(-v_mod[mask_twist], 2 * pi)
-
-        return u_mod, v_mod
+        print(loc.shape, scale.shape)
+        super().__init__(loc=loc, covariance_matrix=scale, validate_args=validate_args)
 
     def rsample(self, sample_shape=torch.Size()):
         """
@@ -53,64 +55,35 @@ class KleinNormal(Normal):
         3) Return a tensor of shape sample_shape + [2].
         """
         uv = super().rsample(sample_shape)  # shape = [..., 2]
-        u, v = uv[..., 0], uv[..., 1]  # each shape = [...]
 
-        u_klein, v_klein = self._project_to_klein(u, v)
+        return project_to_klein(uv)
 
-        return torch.stack([u_klein, v_klein], dim=-1)
+    # * working on the log_prob method
+    def log_prob(self, value, eps: float = 1e-6):
+        if self.klein_support.check(value).any() is False:
+            raise ValueError("Value is not in the support of the Klein Normal distribution.")
 
-    #! THIS FUNCTION IS WRONG: REDO IT ON MY OWN
-    def log_prob(self, theta):
+        stop_criterion = self._create_stop_criterion(eps=eps)
+
+        preimages_of_klein = preimage_of_klein(value)
+        preimages_of_torus = preimage_of_torus_grid(preimages_of_klein)
+        print(f"Preimages of Klein: {preimages_of_klein.shape}, Preimages of Torus: {preimages_of_torus.shape}")
+        # preimage_of_torus_recursive(preimages_of_klein, criterion=stop_criterion)
+
+        log_probs = [torch.log(torch.sum(torch.exp(super().log_prob(preimage)))) for preimage in preimages_of_torus]
+
+        return torch.Tensor(log_probs)  # torch.log(torch.sum(torch.exp(log_probs)))
+
+    def _create_stop_criterion(self, eps: float = 1e-6):
         """
-        Given any point theta = (θ1_in, θ2_in) ∈ ℝ² (or already in [0,2π)×[0,π)):
-        1) First fold θ1_in, θ2_in into their torus‐cover:
-              u_mod  = θ1_in % (2π),  v_mod = θ2_in % (2π).
-        2) Then apply exactly the same “if v_mod < π vs ≥ π” logic to recover
-           (φ1, φ2) ∈ [0,2π)×[0,π), the unique canonical rep on K.
-        3) Call parent Normal.log_prob((φ1, φ2)) → returns two partial log‐densities [..., 2].
-        4) Sum them to get a scalar log‐density on the Klein bottle → return shape [...].
-
-        This ensures log_prob is consistent across all equivalent lifts.
+        Create a stop criterion function for `log_prob`.
         """
-        theta1_in = theta[..., 0]
-        theta2_in = theta[..., 1]
 
-        two_pi = 2.0 * pi
+        def stop_criterion(points):
+            return super().log_prob(points).sum() < eps
 
-        # a) Reduce each input coord into [0, 2π)
-        u_mod = torch.remainder(theta1_in, two_pi)  # [...,]
-        v_mod = torch.remainder(theta2_in, two_pi)  # [...,]
-
-        # b) Allocate tensors for φ1, φ2
-        phi1 = torch.empty_like(u_mod)
-        phi2 = torch.empty_like(v_mod)
-
-        # c) Apply same “bottom vs top” logic
-        mask_bottom = v_mod < pi
-        mask_top = v_mod >= pi
-
-        # bottom: φ1 = u_mod, φ2 = v_mod
-        if mask_bottom.any():
-            phi1[mask_bottom] = u_mod[mask_bottom]
-            phi2[mask_bottom] = v_mod[mask_bottom]
-
-        # top: φ1 = (u_mod + π) % (2π), φ2 = 2π - v_mod
-        if mask_top.any():
-            phi1[mask_top] = torch.remainder(u_mod[mask_top] + pi, two_pi)
-            phi2[mask_top] = two_pi - v_mod[mask_top]
-
-        # d) Stack back into [..., 2] and delegate to Normal.log_prob
-        uv0 = torch.stack([phi1, phi2], dim=-1)  # shape [..., 2]
-        lp = super().log_prob(uv0)  # shape [..., 2]
-        return lp.sum(dim=-1)  # summation → shape [...]
+        return stop_criterion
 
     @property
     def mean(self):
-        """
-        Wrap the base Normal’s mean = self.loc into [0,2π)×[0,π).
-        This is optional, but convenient if any code inspects `dist.mean`.
-        """
-        u0, v0 = self.loc[0], self.loc[1]
-        phi1, phi2 = self._project_to_klein(u0.unsqueeze(0), v0.unsqueeze(0))
-        # phi1, phi2 each shape [1]; return a length-2 tensor
-        return torch.cat([phi1, phi2], dim=0)
+        return project_to_klein(self.loc)
