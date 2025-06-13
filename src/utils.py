@@ -51,7 +51,7 @@ def preimage_of_klein(points: torch.Tensor) -> torch.Tensor:
     return torch.stack([xs_torus, ys_torus], dim=-1)
 
 
-def preimage_of_torus_grid(points, grid_size=1):
+def preimage_of_torus_grid(points, grid_size=3):
     xs, ys = points[..., 0], points[..., 1]
     shifts = range(-grid_size, grid_size + 1)
     all_preimages = [torch.stack([xs + 2 * torch.pi * i, ys + 2 * torch.pi * j], dim=-1) for i in shifts for j in shifts]

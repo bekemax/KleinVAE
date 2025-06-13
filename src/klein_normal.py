@@ -28,7 +28,7 @@ class KleinNormal(MultivariateNormal):
                        and for each preimage call Normal.log_prob((x, y)), then sum the results.
     """
 
-    def __init__(self, loc, scale, validate_args=False):
+    def __init__(self, loc, scale, grid_size: int = 3, validate_args=False):
         """
         loc:   Tensor of shape [2], giving the mean (u,v) in R^2 of the covering Gaussian.
         scale: Tensor of shape [2], giving the std ‐ dev in each coordinate of that covering Gaussian.
@@ -45,7 +45,8 @@ class KleinNormal(MultivariateNormal):
             scale = torch.tensor([[scale, 0], [0, scale]], dtype=torch.float32)
             print(f"scale = {scale}")
 
-        print(loc.shape, scale.shape)
+        self.grid_size = grid_size
+
         super().__init__(loc=loc, covariance_matrix=scale, validate_args=validate_args)
 
     def rsample(self, sample_shape=torch.Size()):
@@ -58,7 +59,7 @@ class KleinNormal(MultivariateNormal):
 
         return project_to_klein(uv)
 
-    # * working on the log_prob method
+    # * working on the log_prob method - seems it works, need more tests (not just ipynb)
     def log_prob(self, value, eps: float = 1e-6):
         if self.klein_support.check(value).any() is False:
             raise ValueError("Value is not in the support of the Klein Normal distribution.")
@@ -66,7 +67,7 @@ class KleinNormal(MultivariateNormal):
         stop_criterion = self._create_stop_criterion(eps=eps)
 
         preimages_of_klein = preimage_of_klein(value)
-        preimages_of_torus = preimage_of_torus_grid(preimages_of_klein)
+        preimages_of_torus = preimage_of_torus_grid(preimages_of_klein, grid_size=self.grid_size)
         print(f"Preimages of Klein: {preimages_of_klein.shape}, Preimages of Torus: {preimages_of_torus.shape}")
 
         flat_preimages = preimages_of_torus.view(-1, preimages_of_torus.shape[-1])
