@@ -11,10 +11,13 @@ dependencies = [
     "persim>=0.3.8",
     "plotly>=6.1.0",
     "ripser>=0.6.12",
+    "torch>=2.7.0",
     "umap-learn>=0.5.7",
 ]
 
+[project.optional-dependencies]
+mpp = ["multipers"]
+
+
 [dependency-groups]
-dev = [
-    "ipykernel>=6.29.5",
-]
+dev = ["ipykernel>=6.29.5"]
