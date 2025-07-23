@@ -9,7 +9,7 @@ def project_to_torus(points: torch.Tensor):
     [0, 2pi) x [0, 2pi) of the torus by wrapping u and v according to the identifications:
         - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l) for k,l in Z
     """
-    u, v = points[:, 0], points[:, 1]
+    u, v = points[..., 0], points[..., 1]
     u_mod = torch.remainder(u, 2 * torch.pi)
     v_mod = torch.remainder(v, 2 * torch.pi)
     return u_mod, v_mod
@@ -20,7 +20,7 @@ def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
     [0, 2pi) x [0, pi) of the Klein bottle by wrapping u and v according to the identifications:
         - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l)    for k,l in Z (torus gluing)
-        - (theta1, theta2) ~ (theta1 + pi, -theta1)              (the “half‐twist” that makes K non-orientable)
+        - (theta1, theta2) ~ (theta1 - pi, -theta1 (mod 2pi))              (the “half‐twist” that makes K non-orientable)
     """
 
     u_mod, v_mod = project_to_torus(points)
@@ -30,7 +30,7 @@ def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
         u_mod[mask_twist] = u_mod[mask_twist] - torch.pi
         v_mod[mask_twist] = torch.remainder(-v_mod[mask_twist], 2 * torch.pi)
 
-    return torch.stack([u_mod, v_mod], dim=1)
+    return torch.stack([u_mod, v_mod], dim=-1)
 
 
 def preimage_of_klein(points: torch.Tensor) -> torch.Tensor:
@@ -44,14 +44,24 @@ def preimage_of_klein(points: torch.Tensor) -> torch.Tensor:
             - the second dimension is the preimage index (0 or 1) corresponding to the two possible preimages,
             - the third dimension contains the x and y coordinates.
     """
-    xs, ys = points[:, 0], points[:, 1]
+    xs, ys = points[..., 0], points[..., 1]
     xs_torus = torch.stack([xs, xs + torch.pi], dim=-1)
     ys_torus = torch.stack([ys, torch.remainder(-ys, 2 * torch.pi)], dim=-1)
 
-    return torch.stack([xs_torus, ys_torus], dim=-1)
+    # print(torch.stack([xs_torus, ys_torus], dim=-1).shape)
+
+    return torch.stack([xs_torus, ys_torus], dim=-1).squeeze(1)
 
 
-def preimage_of_torus_grid(points, grid_size=3):
+def preimage_of_torus_grid(points, grid_size=1):
+    """
+    Given points in the torus, return all preimages in a grid around each point.
+    Args:
+        points: Tensor of shape (..., 2) representing points in the torus.
+        grid_size: Size of the grid to generate preimages around each point.
+    Returns:
+        Tensor of shape (..., (2 * grid_size + 1) ** 2, 2) representing preimages in the torus.
+    """
     xs, ys = points[..., 0], points[..., 1]
     shifts = range(-grid_size, grid_size + 1)
     all_preimages = [torch.stack([xs + 2 * torch.pi * i, ys + 2 * torch.pi * j], dim=-1) for i in shifts for j in shifts]

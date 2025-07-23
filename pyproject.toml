@@ -12,11 +12,12 @@ dependencies = [
     "plotly>=6.1.0",
     "ripser>=0.6.12",
     "torch>=2.7.0",
-    "umap-learn>=0.5.7",
 ]
 
 [project.optional-dependencies]
 mpp = ["multipers"]
+persistence = ["giotto-tda"]
+umap = ["umap-learn"]
 
 
 [dependency-groups]

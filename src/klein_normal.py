@@ -10,6 +10,7 @@ class KleinConstraint(constraints.Constraint):
 
     def check(self, value):
         # value is [..., 2]
+        print(value.shape)
         theta1 = value[..., 0]
         theta2 = value[..., 1]
         return (theta1 >= 0) & (theta1 < torch.pi) & (theta2 >= 0) & (theta2 < 2 * torch.pi)
@@ -35,15 +36,11 @@ class KleinNormal(MultivariateNormal):
         """
         self.klein_support = KleinConstraint()
 
-        if not isinstance(loc, torch.Tensor) or loc.shape != (2,):
-            print(f"loc must be a tensor of shape [2].\nCreating a shape [2] tensor ({loc:.2f},{loc:.2f}).")
-            loc = torch.tensor([loc, loc], dtype=torch.float32)
-            print(f"loc = {loc}")
+        if not isinstance(loc, torch.Tensor) or loc.shape[-1] != 2:
+            print("loc must be a tensor of shape [2].")
 
-        if not isinstance(scale, torch.Tensor) or scale.shape != (2,):
-            print(f"scale must be a tensor of shape [2].\nCreating a shape [2] tensor ({scale:.2f},{scale:.2f}).")
-            scale = torch.tensor([[scale, 0], [0, scale]], dtype=torch.float32)
-            print(f"scale = {scale}")
+        if not isinstance(scale, torch.Tensor) or scale.shape[-2:] != (2, 2):
+            print("scale must be a tensor of shape [2].")
 
         self.grid_size = grid_size
 
