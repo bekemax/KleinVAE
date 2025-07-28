@@ -29,23 +29,26 @@ class MulticlassFiltersDataModule(LightningDataModule):
     def setup(self, stage=None):
         theta1_samples_list = []
         theta2_samples_list = []
-        for center in self.class_centers:
+        labels = []
+        for i, center in enumerate(self.class_centers):
             t1 = torch.normal(mean=center[0], std=self.class_std, size=(self.num_samples_per_angle,))
             t2 = torch.normal(mean=center[1], std=self.class_std, size=(self.num_samples_per_angle,))
             t1 = t1.clamp(0.0, torch.pi)
             t2 = t2.clamp(0.0, 2 * torch.pi)
             theta1_samples_list.append(t1)
             theta2_samples_list.append(t2)
+            labels.extend([i] * self.num_samples_per_angle)
         thetas_1 = torch.cat(theta1_samples_list)
         thetas_2 = torch.cat(theta2_samples_list)
+        self.coordinates = [(t1, t2) for t1 in thetas_1 for t2 in thetas_2]
         klein_filters = torch.stack(
-            [generate_klein_filter_matrix(t1, t2, size=self.filter_size, midpoint=False) for t1, t2 in zip(thetas_1, thetas_2)]
+            [generate_klein_filter_matrix(t1, t2, size=self.filter_size, midpoint=False).flatten() for t1, t2 in self.coordinates]
         )
-        thetas_1 = torch.rand(self.num_samples_per_angle) * torch.pi
-        thetas_2 = torch.rand(self.num_samples_per_angle) * 2 * torch.pi
-        klein_filters = torch.stack(
-            [generate_klein_filter_matrix(t1, t2, size=self.filter_size, midpoint=False) for t1 in thetas_1 for t2 in thetas_2]
-        )
+
+        # normalize to 0-1
+        min_val = klein_filters.min()
+        max_val = klein_filters.max()
+        klein_filters = (klein_filters - min_val) / (max_val - min_val)
 
         train_data, val_data = train_test_split(klein_filters, test_size=0.2, random_state=42)
 
