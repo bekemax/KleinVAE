@@ -8,12 +8,13 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 
 
 class KleinVAEModule(pl.LightningModule):
-    def __init__(self, model, std=1.0, lr=1e-3, batch_size: int = 1):
+    def __init__(self, model, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
         super().__init__()
         self.save_hyperparameters()
         self.model = model
         self.lr = lr
         self.batch_size = batch_size
+        self.kl_weight = kl_weight
 
     def sample(self, num_samples):
         return project_to_klein(torch.randn(num_samples, 2))
@@ -49,7 +50,7 @@ class KleinVAEModule(pl.LightningModule):
         prior_dist = MultivariateNormal(prior_loc, scale_tril=prior_scale)
 
         kl_div = kl_divergence(q, prior_dist).mean()
-        return recon_loss + kl_div, recon_loss, kl_div
+        return recon_loss + self.kl_weight * kl_div, recon_loss, kl_div
 
     def training_step(self, batch, batch_idx):
         x = batch[0]
