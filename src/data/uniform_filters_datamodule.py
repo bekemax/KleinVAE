@@ -25,6 +25,7 @@ class UniformFiltersDataModule(LightningDataModule):
         )
 
         klein_filters = (klein_filters + 3.32) / 6.64  # Normalize to [0, 1]
+        # klein_filters = F.sigmoid(klein_filters)
 
         train_data, val_data = train_test_split(klein_filters, test_size=0.2, random_state=42)
 

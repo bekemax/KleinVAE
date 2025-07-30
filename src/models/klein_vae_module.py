@@ -1,5 +1,4 @@
 from src.utils import project_to_klein
-from src.data.components.utils import generate_klein_filter_matrix
 
 import lightning as pl
 import torch
@@ -9,6 +8,44 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions import Uniform
 
 from typing import Tuple, Union
+
+
+def generate_klein_filter_matrix_batched(theta_1: torch.Tensor, theta_2: torch.Tensor, size: int = 3) -> torch.Tensor:
+    """
+    Batched version of generate_klein_filter_matrix.
+
+    Args:
+        theta_1: [B] tensor
+        theta_2: [B] tensor
+        size: Output matrix size per sample
+
+    Returns:
+        [B, size, size] tensor
+    """
+    B = theta_1.shape[0]
+    device = theta_1.device
+
+    coords = torch.linspace(-1, 1, size, device=device)
+    X, Y = torch.meshgrid(coords, coords, indexing="ij")  # [size, size]
+
+    # Expand to [B, size, size]
+    X = X.unsqueeze(0).expand(B, -1, -1)  # [B, size, size]
+    Y = Y.unsqueeze(0).expand(B, -1, -1)
+
+    # Reshape theta to broadcast: [B, 1, 1]
+    theta_1 = theta_1.view(B, 1, 1)
+    theta_2 = theta_2.view(B, 1, 1)
+
+    # Projection t = x * cos(θ₁) + y * sin(θ₁)
+    t = X * torch.cos(theta_1) + Y * torch.sin(theta_1)  # [B, size, size]
+
+    # Chebyshev 2nd poly
+    cheb = 2 * t.pow(2) - 1
+
+    # Klein filter: sin(θ₂) * t + cos(θ₂) * chebyshev(t)
+    result = torch.sin(theta_2) * t + torch.cos(theta_2) * cheb  # [B, size, size]
+
+    return result
 
 
 class KleinVAEModule(pl.LightningModule):
@@ -34,8 +71,8 @@ class KleinVAEModule(pl.LightningModule):
         batch_size = mu.shape[0]
 
         L = torch.zeros(batch_size, 2, 2, device=mu.device)
-        L[:, 0, 0] = var[:, 0]
-        L[:, 1, 1] = var[:, 1]
+        L[:, 0, 0] = 1e-3  # var[:, 0]
+        L[:, 1, 1] = 1e-3  # var[:, 1]
         L[:, 1, 0] = 0  # non_diag[:, 0]
 
         standard_normal = MultivariateNormal(torch.zeros(2), torch.eye(2))
@@ -47,9 +84,18 @@ class KleinVAEModule(pl.LightningModule):
         return self.model.encode(x)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        recon_x = generate_klein_filter_matrix(z[..., 0] * 2 * torch.pi, z[..., 1] * 2 * torch.pi, size=3).flatten().unsqueeze(0)
+        theta = z * 2 * torch.pi  # z is [B, 2]
+        theta_1 = theta[:, 0]
+        theta_2 = theta[:, 1]
 
-        recon_x = (recon_x + 3.32) / 6.64  # Normalize to [0, 1]
+        recon_x = generate_klein_filter_matrix_batched(theta_1, theta_2, size=3)  # [B, 3, 3]
+        recon_x = recon_x.view(z.shape[0], -1)  # Flatten to [B, 9]
+        recon_x = (recon_x + 3.32) / 6.64  # [B, 9]
+
+        # recon_x = generate_klein_filter_matrix(z[..., 0] * 2 * torch.pi, z[..., 1] * 2 * torch.pi, size=3).flatten().unsqueeze(0)
+        # recon_x = F.sigmoid(recon_x)
+        # recon_x = (recon_x + 3.32) / 6.64  # Normalize to [0, 1]
+
         return recon_x
 
     def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

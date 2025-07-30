@@ -111,7 +111,7 @@ class ConvolutionalVAE(nn.Module):
         decoder_layers.extend(
             [
                 nn.ConvTranspose2d(in_channels, input_channels, kernel_size=3, stride=2, padding=1, output_padding=1),
-                nn.Sigmoid(),  # Assuming input is normalized between 0 and 1
+                # Removed Sigmoid here since we'll apply it in decode method if needed
             ]
         )
 
@@ -133,7 +133,9 @@ class ConvolutionalVAE(nn.Module):
     def decode(self, z):
         # Reshape z to start the deconvolution process
         z = z.view(z.size(0), z.size(1), 1, 1)
-        return self.decoder(z)
+        decoded = self.decoder(z)
+        # Ensure output is in [0, 1] range for binary cross entropy
+        return torch.sigmoid(decoded)
 
     def forward(self, x):
         mu, log_sigma, rho = self.encode(x)
