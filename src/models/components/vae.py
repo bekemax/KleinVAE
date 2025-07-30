@@ -1,4 +1,5 @@
 from torch import nn
+import torch
 
 from typing import List
 
@@ -19,17 +20,17 @@ class SimpleVAE(nn.Module):
         prev_dim = input_dim
         for h_dim in hidden_dims:
             encoder_layers.append(nn.Linear(prev_dim, h_dim))
-            encoder_layers.append(nn.ReLU())
+            encoder_layers.append(nn.LeakyReLU())
             prev_dim = h_dim
         encoder_layers.append(nn.Linear(prev_dim, 5))  # Output: 2 mean, sigma_X, sigma_Y, non_diag
         self.encoder = nn.Sequential(*encoder_layers)
 
         # Decoder
         decoder_layers = []
-        prev_dim = 2  # Decoder input is always 2 (z)
-        for h_dim in reversed(hidden_dims):
+        prev_dim = 4  # Decoder input is always 2 (z)
+        for h_dim in [4, 8, 16]:  # reversed(hidden_dims)
             decoder_layers.append(nn.Linear(prev_dim, h_dim))
-            decoder_layers.append(nn.ReLU())
+            decoder_layers.append(nn.LeakyReLU())
             prev_dim = h_dim
         decoder_layers.append(nn.Linear(prev_dim, input_dim))
         decoder_layers.append(nn.Sigmoid())  # Assuming input is normalized between 0 and 1
@@ -47,7 +48,9 @@ class SimpleVAE(nn.Module):
         raise NotImplementedError("Reparameterization is implemented in the LightningModule.")
 
     def decode(self, z):
-        return self.decoder(z)
+        y = z * 2 * torch.pi  # Scale z to [0, 2pi)
+        sin_cos = torch.cat([torch.sin(y), torch.cos(y)], dim=-1)
+        return self.decoder(sin_cos)
 
     def forward(self, x):
         mu, log_sigma, rho = self.encode(x)

@@ -10,8 +10,8 @@ def project_to_torus(points: torch.Tensor):
         - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l) for k,l in Z
     """
     u, v = points[..., 0], points[..., 1]
-    u_mod = torch.remainder(u, 2 * torch.pi)
-    v_mod = torch.remainder(v, 2 * torch.pi)
+    u_mod = torch.remainder(u, 2)
+    v_mod = torch.remainder(v, 1)
     return u_mod, v_mod
 
 
@@ -25,10 +25,10 @@ def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
 
     u_mod, v_mod = project_to_torus(points)
 
-    mask_twist = u_mod >= torch.pi
+    mask_twist = u_mod >= 1
     if mask_twist.any():
-        u_mod[mask_twist] = u_mod[mask_twist] - torch.pi
-        v_mod[mask_twist] = torch.remainder(-v_mod[mask_twist], 2 * torch.pi)
+        u_mod[mask_twist] = u_mod[mask_twist] - 1
+        v_mod[mask_twist] = torch.remainder(-v_mod[mask_twist], 1)
 
     return torch.stack([u_mod, v_mod], dim=-1)
 

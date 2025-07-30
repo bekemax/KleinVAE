@@ -14,16 +14,17 @@ class UniformFiltersDataModule(LightningDataModule):
         self.filter_size = filter_size
 
     def setup(self, stage=None):
-        thetas_1 = torch.rand(self.num_samples_per_angle) * torch.pi
-        thetas_2 = torch.rand(self.num_samples_per_angle) * 2 * torch.pi
+        thetas_1 = torch.rand(self.num_samples_per_angle)
+        thetas_2 = torch.rand(self.num_samples_per_angle)
+        self.coordinates = torch.Tensor([(t1, t2) for t1 in thetas_1 for t2 in thetas_2])
         klein_filters = torch.stack(
-            [generate_klein_filter_matrix(t1, t2, size=self.filter_size, midpoint=False).flatten() for t1 in thetas_1 for t2 in thetas_2]
+            [
+                generate_klein_filter_matrix(t1 * 2 * torch.pi, t2 * 2 * torch.pi, size=self.filter_size, midpoint=False).flatten()
+                for t1, t2 in self.coordinates
+            ]
         )
 
-        # normalize to 0-1
-        min_val = klein_filters.min()
-        max_val = klein_filters.max()
-        klein_filters = (klein_filters - min_val) / (max_val - min_val)
+        klein_filters = (klein_filters + 3.32) / 6.64  # Normalize to [0, 1]
 
         train_data, val_data = train_test_split(klein_filters, test_size=0.2, random_state=42)
 

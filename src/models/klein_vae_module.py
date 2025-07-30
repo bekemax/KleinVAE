@@ -1,52 +1,74 @@
 from src.utils import project_to_klein
+from src.data.components.utils import generate_klein_filter_matrix
 
 import lightning as pl
 import torch
 import torch.nn.functional as F
 from torch.distributions.kl import kl_divergence
 from torch.distributions.multivariate_normal import MultivariateNormal
+from torch.distributions import Uniform
+
+from typing import Tuple, Union
 
 
 class KleinVAEModule(pl.LightningModule):
-    def __init__(self, model, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
+    def __init__(self, model, sigma2: float = 5, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
         super().__init__()
         self.save_hyperparameters()
         self.model = model
         self.lr = lr
         self.batch_size = batch_size
         self.kl_weight = kl_weight
+        self.sigma2 = sigma2
 
-    def sample(self, num_samples):
-        return project_to_klein(torch.randn(num_samples, 2))
+    def sample(self, num_samples, return_unprojected: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        prior_dist = Uniform(low=0, high=1)
+        samples = prior_dist.sample([num_samples, 2])
+        if return_unprojected:
+            return project_to_klein(samples), samples
+        else:
+            return project_to_klein(samples)
 
-    def reparameterize(self, mu, log_sigma, non_diag):
+    def reparameterize(self, mu, log_sigma, non_diag) -> Tuple[torch.Tensor, torch.Tensor]:
         var = torch.exp(log_sigma)
         batch_size = mu.shape[0]
 
-        # Create L matrix for each batch element
         L = torch.zeros(batch_size, 2, 2, device=mu.device)
-        L[:, 0, 0] = var[:, 0]  # sigma_x
-        L[:, 1, 1] = var[:, 1]  # sigma_y
-        L[:, 1, 0] = non_diag[:, 0]  # non-diagonal element
+        L[:, 0, 0] = var[:, 0]
+        L[:, 1, 1] = var[:, 1]
+        L[:, 1, 0] = 0  # non_diag[:, 0]
 
-        eps = torch.randn_like(mu)
+        standard_normal = MultivariateNormal(torch.zeros(2), torch.eye(2))
+        eps = standard_normal.sample([batch_size])  # -> shape (batch_size, 2)
+        # torch.randn_like(mu) * torch.sqrt(torch.tensor(self.sigma2, device=mu.device))
         return mu + torch.matmul(L, eps.unsqueeze(-1)).squeeze(-1), L
 
-    def forward(self, x):
-        mu, log_sigma, non_diag = self.model.encode(x)
+    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.model.encode(x)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        recon_x = generate_klein_filter_matrix(z[..., 0] * 2 * torch.pi, z[..., 1] * 2 * torch.pi, size=3).flatten().unsqueeze(0)
+
+        recon_x = (recon_x + 3.32) / 6.64  # Normalize to [0, 1]
+        return recon_x
+
+    def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu, log_sigma, non_diag = self.encode(x)
         z_on_plane, L = self.reparameterize(mu, log_sigma, non_diag)
         z_on_klein = project_to_klein(z_on_plane)
-        recon_x = self.model.decode(z_on_klein)
+
+        recon_x = self.decode(z_on_klein)
+
         return recon_x, mu, L
 
-    def _vae_loss(self, x, recon_x, mu, L):
-        recon_loss = F.binary_cross_entropy(recon_x, x, reduction="sum")
+    def _vae_loss(self, x, recon_x, mu, L) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        recon_loss = F.binary_cross_entropy(recon_x, x, reduction="mean")
 
         # Create multivariate normal with batched L matrices
         q = MultivariateNormal(mu, scale_tril=L)
 
         prior_loc = torch.zeros_like(mu)
-        prior_scale = torch.eye(2, device=mu.device).unsqueeze(0).repeat(mu.size(0), 1, 1)
+        prior_scale = torch.eye(2, device=mu.device).unsqueeze(0).repeat(mu.size(0), 1, 1) * self.sigma2
         prior_dist = MultivariateNormal(prior_loc, scale_tril=prior_scale)
 
         kl_div = kl_divergence(q, prior_dist).mean()
@@ -54,9 +76,9 @@ class KleinVAEModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x = batch[0]
-        recon_x, mu, L = self(x)
+        recon_x, mu, L = self.forward(x)
         loss, recon_loss, kl = self._vae_loss(x, recon_x, mu, L)
-        self.log_dict({"train_loss": loss, "recon_loss": recon_loss, "kl_div": kl})
+        self.log_dict({"train_loss": loss, "recon_loss": recon_loss, "kl_div": kl}, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
