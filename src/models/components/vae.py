@@ -4,7 +4,7 @@ from typing import List
 
 
 class SimpleVAE(nn.Module):
-    def __init__(self, input_dim: int = 9, hidden_dims: List[int] = [16, 32, 64]):
+    def __init__(self, input_dim: int, hidden_dims: List[int] = [16, 32, 64]):
         """
         A Variational Autoencoder (VAE) implementation.
         Args:
@@ -26,8 +26,8 @@ class SimpleVAE(nn.Module):
 
         # Decoder
         decoder_layers = []
-        prev_dim = 4  # Decoder input is always 2 (z)
-        for h_dim in [4, 8, 16]:  # reversed(hidden_dims)
+        prev_dim = 2  # Decoder input is always 2 (z)
+        for h_dim in reversed(hidden_dims):  # reversed(hidden_dims)
             decoder_layers.append(nn.Linear(prev_dim, h_dim))
             decoder_layers.append(nn.LeakyReLU())
             prev_dim = h_dim

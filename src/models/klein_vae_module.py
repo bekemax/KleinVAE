@@ -51,7 +51,9 @@ def generate_klein_filter_matrix_batched(theta_1: torch.Tensor, theta_2: torch.T
 
 
 class KleinVAEModule(pl.LightningModule):
-    def __init__(self, model: SimpleVAE, sigma2: float = 5, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
+    def __init__(
+        self, model: SimpleVAE, sigma2: float = 5, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1, use_decoder=False
+    ):
         super().__init__()
         self.save_hyperparameters()
         self.model = model
@@ -59,6 +61,7 @@ class KleinVAEModule(pl.LightningModule):
         self.batch_size = batch_size
         self.kl_weight = kl_weight
         self.sigma2 = sigma2
+        self.use_decoder = use_decoder
 
     def sample(self, num_samples, return_unprojected: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         prior_dist = Uniform(low=0, high=1)
@@ -73,8 +76,8 @@ class KleinVAEModule(pl.LightningModule):
         batch_size = mu.shape[0]
 
         L = torch.zeros(batch_size, 2, 2, device=mu.device)
-        L[:, 0, 0] = var[:, 0]
-        L[:, 1, 1] = var[:, 0]
+        L[:, 0, 0] = 1e-5  # var[:, 0]
+        L[:, 1, 1] = 1e-5  # var[:, 0]
         L[:, 1, 0] = 0  # non_diag[:, 0]
 
         standard_normal = MultivariateNormal(torch.zeros(2), torch.eye(2))
@@ -82,31 +85,29 @@ class KleinVAEModule(pl.LightningModule):
         # torch.randn_like(mu) * torch.sqrt(torch.tensor(self.sigma2, device=mu.device))
         return mu + torch.matmul(L, eps.unsqueeze(-1)).squeeze(-1), L
 
-    def freeze_encoder(self):
+    def refreeze_encoder(self, flag: bool = False):
         for param in self.model.encoder.parameters():
-            param.requires_grad = False
+            param.requires_grad = flag
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         return self.model.encode(x)
 
-    def decode(self, z: torch.Tensor, use_decoder: bool = False) -> torch.Tensor:
-        if use_decoder:
-            y = z * 2 * torch.pi  # Scale z to [0, 2pi)
-            sin_cos = torch.cat([torch.sin(y), torch.cos(y)], dim=-1)
-            return self.model.decode(sin_cos)
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        if self.use_decoder:
+            # y = z * 2 * torch.pi  # Scale z to [0, 2pi)
+            # sin_cos = torch.cat([torch.sin(y), torch.cos(y)], dim=-1)
+            recon_x = self.model.decode(z)
+        else:
+            #! Here we use the fixed decoder
+            theta = z * 2 * torch.pi  # z is [B, 2]
+            theta_1 = theta[:, 0]
+            theta_2 = theta[:, 1]
 
-        #! Here we use the fixed decoder
-        theta = z * 2 * torch.pi  # z is [B, 2]
-        theta_1 = theta[:, 0]
-        theta_2 = theta[:, 1]
+            recon_x = generate_klein_filter_matrix_batched(theta_1, theta_2, size=3)  # [B, 3, 3]
+            recon_x = recon_x.view(z.shape[0], -1)  # Flatten to [B, 9]
+            recon_x = (recon_x + 3.32) / 6.64  # [B, 9]
 
-        recon_x = generate_klein_filter_matrix_batched(theta_1, theta_2, size=3)  # [B, 3, 3]
-        recon_x = recon_x.view(z.shape[0], -1)  # Flatten to [B, 9]
-        recon_x = (recon_x + 3.32) / 6.64  # [B, 9]
-
-        # recon_x = generate_klein_filter_matrix(z[..., 0] * 2 * torch.pi, z[..., 1] * 2 * torch.pi, size=3).flatten().unsqueeze(0)
-        # recon_x = F.sigmoid(recon_x)
-        # recon_x = (recon_x + 3.32) / 6.64  # Normalize to [0, 1]
+            # recon_x = generate_klein_filter_matrix(z[..., 0] * 2 * torch.pi, z[..., 1] * 2 * torch.pi, size=3).flatten().unsqueeze(0)
 
         return recon_x
 
@@ -157,8 +158,8 @@ class KleinVAEModule(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "recon_loss",
-                "interval": "step",
+                "monitor": "train_loss",
+                "interval": "epoch",
                 "frequency": 1,
                 "strict": True,
                 "name": "lr",

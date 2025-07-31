@@ -28,7 +28,7 @@ def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
     mask_twist = u_mod >= 1
     if mask_twist.any():
         u_mod[mask_twist] = u_mod[mask_twist] - 1
-        v_mod[mask_twist] = torch.remainder(-v_mod[mask_twist], 1)
+        v_mod[mask_twist] = 1 - v_mod[mask_twist]  # torch.remainder(-v_mod[mask_twist], 1)  # 1 - v_mod[mask_twist]
 
     return torch.stack([u_mod, v_mod], dim=-1)
 
