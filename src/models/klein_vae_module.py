@@ -76,8 +76,8 @@ class KleinVAEModule(pl.LightningModule):
         batch_size = mu.shape[0]
 
         L = torch.zeros(batch_size, 2, 2, device=mu.device)
-        L[:, 0, 0] = 1e-5  # var[:, 0]
-        L[:, 1, 1] = 1e-5  # var[:, 0]
+        L[:, 0, 0] = var[:, 0]
+        L[:, 1, 1] = var[:, 0]
         L[:, 1, 0] = 0  # non_diag[:, 0]
 
         standard_normal = MultivariateNormal(torch.zeros(2), torch.eye(2))
@@ -123,10 +123,9 @@ class KleinVAEModule(pl.LightningModule):
     def _vae_loss(self, x, recon_x, mu, L) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         recon_loss = F.binary_cross_entropy(recon_x, x, reduction="mean")
 
-        # Create multivariate normal with batched L matrices
         q = MultivariateNormal(mu, scale_tril=L)
 
-        prior_loc = torch.zeros_like(mu)
+        prior_loc = torch.zeros_like(mu) + 0.5  # Center the prior at (0.5, 0.5)
         prior_scale = torch.eye(2, device=mu.device).unsqueeze(0).repeat(mu.size(0), 1, 1) * self.sigma2
         prior_dist = MultivariateNormal(prior_loc, scale_tril=prior_scale)
 
