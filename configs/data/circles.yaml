@@ -3,3 +3,4 @@ image_linear_pixel_size: 30
 circle_radius: 0.3
 num_images: 100000
 batch_size: 1024
+persistence_subsample_size: 500

@@ -5,6 +5,7 @@ sigma2: 0.1
 lr: 1e-3
 batch_size: ${..data.batch_size}
 kl_weight: 1e-2
+topo_metric_freq: 10
 
 # Optimizer configuration
 optimizer:
