@@ -1,19 +1,32 @@
-from src.utils import project_to_torus
+from src.utils.topology_utils import project_to_torus
 from .components.vae import SimpleVAE
 
 import lightning as pl
 import torch
 import torch.nn.functional as F
+from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.distributions.kl import kl_divergence
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions import Uniform
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from typing import Tuple, Union, Optional
+from argparse import Namespace
+from typing import Any, Dict, Tuple, Type, Union, Optional
 
 
 class TorusVAEModule(pl.LightningModule):
-    def __init__(self, model: SimpleVAE, sigma2: float = 5, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
+    hparams: Namespace
+
+    def __init__(
+        self,
+        model: SimpleVAE,
+        optimizer: Type[Optimizer],
+        scheduler: LRScheduler | None = None,
+        sigma2: float = 5,
+        lr: float = 1e-3,
+        batch_size: int = 1,
+        kl_weight: float = 1e-1,
+    ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
         self.model = model
@@ -93,26 +106,35 @@ class TorusVAEModule(pl.LightningModule):
         self.log_dict({"val_loss": loss, "val_recon_loss": recon_loss, "val_kl_div": kl})
         return loss
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.99, patience=0)
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Choose what optimizers and learning-rate schedulers to use in your optimization.
+        Normally you'd need one. But in the case of GANs or similar you might have multiple.
 
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "train_loss",
-                "interval": "epoch",
-                "frequency": 1,
-                "strict": True,
-                "name": "lr",
-            },
-        }
+        Examples:
+            https://lightning.ai/docs/pytorch/latest/common/lightning_module.html#configure-optimizers
+
+        :return: A dict containing the configured optimizers and learning-rate schedulers to be used for training.
+        """
+        optimizer = self.hparams.optimizer(params=self.trainer.model.parameters())  # type: ignore
+        if self.hparams.scheduler is not None and self.hparams.scheduler != {}:
+            scheduler = self.hparams.scheduler(optimizer=optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                    "strict": True,
+                    "name": "lr",
+                },
+            }
+        return {"optimizer": optimizer}
 
 
 if __name__ == "__main__":
     model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64], latent_dim=2)
-    vae_module = TorusVAEModule(model=model)
+    vae_module = TorusVAEModule(model=model, optimizer=torch.optim.Adam)
 
     x = torch.randn(16, 28 * 28)
     recon_x, mu, log_var = vae_module(x)

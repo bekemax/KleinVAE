@@ -38,7 +38,6 @@ class SimpleVAE(nn.Module):
 
     def encode(self, x):
         h = self.encoder(x)
-        print(h.shape)
         # Output: [mu_x, mu_y, log_sigma_x, log_sigma_y, non_diag]
         mu = h[..., : self.latent_dim]
         log_sigma = h[..., self.latent_dim : self.latent_dim + 1]

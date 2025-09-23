@@ -1,14 +1,27 @@
 import lightning as pl
 import torch
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from typing import Tuple
+from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
+
+from argparse import Namespace
+from typing import Any, Dict, Tuple, Type
 
 from src.models.components.vae import SimpleVAE
 
 
 class VanillaVAEModule(pl.LightningModule):
-    def __init__(self, model: SimpleVAE, latent_dim: int, lr: float = 1e-3, kl_weight: float = 1.0):
+    hparams: Namespace
+
+    def __init__(
+        self,
+        model: SimpleVAE,
+        latent_dim: int,
+        optimizer: Type[Optimizer],
+        scheduler: LRScheduler | None = None,
+        lr: float = 1e-3,
+        kl_weight: float = 1.0,
+    ):
         super().__init__()
         # Using save_hyperparameters() automatically logs these values
         self.save_hyperparameters(ignore=["model"])
@@ -73,22 +86,36 @@ class VanillaVAEModule(pl.LightningModule):
         samples = self.model.decode(z)
         return samples
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=10)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-            },
-        }
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """Choose what optimizers and learning-rate schedulers to use in your optimization.
+        Normally you'd need one. But in the case of GANs or similar you might have multiple.
+
+        Examples:
+            https://lightning.ai/docs/pytorch/latest/common/lightning_module.html#configure-optimizers
+
+        :return: A dict containing the configured optimizers and learning-rate schedulers to be used for training.
+        """
+        optimizer = self.hparams.optimizer(params=self.trainer.model.parameters())  # type: ignore
+        if self.hparams.scheduler is not None and self.hparams.scheduler != {}:
+            scheduler = self.hparams.scheduler(optimizer=optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                    "strict": True,
+                    "name": "lr",
+                },
+            }
+        return {"optimizer": optimizer}
 
 
 if __name__ == "__main__":
     latent_dim = 4
     model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64], latent_dim=latent_dim)
-    vae_module = VanillaVAEModule(model=model, latent_dim=latent_dim)
+    vae_module = VanillaVAEModule(model=model, latent_dim=latent_dim, optimizer=torch.optim.Adam)
 
     x = torch.randn(16, 28 * 28)
     recon_x, mu, log_var = vae_module(x)

@@ -1,0 +1,29 @@
+_target_: src.models.klein_vae_module.KleinVAEModule
+
+# KleinVAE hyperparameters
+sigma2: 5.0
+lr: 0.001
+batch_size: 32
+kl_weight: 0.1
+
+# Optimizer configuration
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: ${..lr}
+  weight_decay: 0.0
+
+# Scheduler configuration
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+# SimpleVAE network configuration
+model:
+  _target_: src.models.components.vae.SimpleVAE
+  input_dim: 1600 # 40x40 for circles dataset
+  hidden_dims: [128, 64, 32]
+  latent_dim: 2
