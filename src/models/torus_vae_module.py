@@ -1,4 +1,4 @@
-from src.utils import project_to_klein
+from src.utils import project_to_torus
 from .components.vae import SimpleVAE
 
 import lightning as pl
@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from typing import Tuple, Union, Optional
 
 
-class KleinVAEModule(pl.LightningModule):
+class TorusVAEModule(pl.LightningModule):
     def __init__(self, model: SimpleVAE, sigma2: float = 5, lr: float = 1e-3, batch_size: int = 1, kl_weight: float = 1e-1):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -26,9 +26,9 @@ class KleinVAEModule(pl.LightningModule):
         prior_dist = Uniform(low=0, high=1)
         samples = prior_dist.sample([num_samples, 2])
         if return_unprojected:
-            return project_to_klein(samples), samples
+            return project_to_torus(samples, stack=True), samples  # type: ignore
         else:
-            return project_to_klein(samples)
+            return project_to_torus(samples, stack=True)
 
     def reparameterize(self, mu, log_sigma, non_diag) -> Tuple[torch.Tensor, torch.Tensor]:
         var = torch.exp(log_sigma)
@@ -58,9 +58,9 @@ class KleinVAEModule(pl.LightningModule):
     def forward(self, x) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, log_sigma, non_diag = self.encode(x)
         z_on_plane, L = self.reparameterize(mu, log_sigma, non_diag)
-        z_on_klein = project_to_klein(z_on_plane)
+        z_on_torus = project_to_torus(z_on_plane, stack=True)
 
-        recon_x = self.decode(z_on_klein)
+        recon_x = self.decode(z_on_torus)  # type: ignore
 
         return recon_x, mu, L
 
@@ -111,8 +111,8 @@ class KleinVAEModule(pl.LightningModule):
 
 
 if __name__ == "__main__":
-    model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64])
-    vae_module = KleinVAEModule(model=model)
+    model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64], latent_dim=2)
+    vae_module = TorusVAEModule(model=model)
 
     x = torch.randn(16, 28 * 28)
     recon_x, mu, log_var = vae_module(x)

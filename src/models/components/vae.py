@@ -4,7 +4,7 @@ from typing import List
 
 
 class SimpleVAE(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: List[int] = [16, 32, 64]):
+    def __init__(self, input_dim: int, hidden_dims: List[int] = [16, 32, 64], latent_dim: int = 2):
         """
         A Variational Autoencoder (VAE) implementation.
         Args:
@@ -14,6 +14,7 @@ class SimpleVAE(nn.Module):
         Decoder input is fixed to 2 (z is always 2D).
         """
         super(SimpleVAE, self).__init__()
+        self.latent_dim = latent_dim
         # Encoder
         encoder_layers = []
         prev_dim = input_dim
@@ -21,12 +22,12 @@ class SimpleVAE(nn.Module):
             encoder_layers.append(nn.Linear(prev_dim, h_dim))
             encoder_layers.append(nn.LeakyReLU())
             prev_dim = h_dim
-        encoder_layers.append(nn.Linear(prev_dim, 3))  # Output: 2 mean, sigma  #_X, sigma_Y, non_diag
+        encoder_layers.append(nn.Linear(prev_dim, latent_dim + 1))  # Output: latent_dim mean, sigma /////_X, sigma_Y, non_diag
         self.encoder = nn.Sequential(*encoder_layers)
 
         # Decoder
         decoder_layers = []
-        prev_dim = 2  # Decoder input is always 2 (z)
+        prev_dim = latent_dim  # Decoder input is always 2 (z)
         for h_dim in reversed(hidden_dims):  # reversed(hidden_dims)
             decoder_layers.append(nn.Linear(prev_dim, h_dim))
             decoder_layers.append(nn.LeakyReLU())
@@ -37,9 +38,10 @@ class SimpleVAE(nn.Module):
 
     def encode(self, x):
         h = self.encoder(x)
+        print(h.shape)
         # Output: [mu_x, mu_y, log_sigma_x, log_sigma_y, non_diag]
-        mu = h[..., :2]
-        log_sigma = h[..., 2:3]
+        mu = h[..., : self.latent_dim]
+        log_sigma = h[..., self.latent_dim : self.latent_dim + 1]
         # non_diag = h[..., 4:5]
         return mu, log_sigma, None
 

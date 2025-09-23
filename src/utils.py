@@ -1,18 +1,27 @@
 import torch
 
-from typing import Callable
+from typing import Callable, Tuple, Union
 
 
-def project_to_torus(points: torch.Tensor):
+def project_to_torus(points: torch.Tensor, stack: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
     [0, 2pi) x [0, 2pi) of the torus by wrapping u and v according to the identifications:
         - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l) for k,l in Z
+    Args:
+        points: Tensor of shape (..., 2) representing points in R^2
+        stack: If True, return a stacked tensor of shape (..., 2). If False, return a tuple of tensors (u_mod, v_mod).
+    Returns:
+        If stack is True, a tensor of shape (..., 2) representing points on the torus.
+        If stack is False, a tuple of tensors (u_mod, v_mod) each of shape (...,).
     """
     u, v = points[..., 0], points[..., 1]
     u_mod = torch.remainder(u, 2)
     v_mod = torch.remainder(v, 1)
-    return u_mod, v_mod
+    if stack:
+        return torch.stack([u_mod, v_mod], dim=-1)
+    else:
+        return u_mod, v_mod
 
 
 def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
