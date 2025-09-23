@@ -9,3 +9,5 @@ lightning_logs
 *.npy
 *.npz
 *.png
+
+unsorted/
