@@ -5,7 +5,8 @@ from sklearn.model_selection import train_test_split
 
 from argparse import Namespace
 
-from ripser import ripser
+
+from src.utils.topology_utils import compute_persistence_diagrams
 
 
 class CirclesDatamodule(LightningDataModule):
@@ -77,8 +78,7 @@ class CirclesDatamodule(LightningDataModule):
 
         indices = torch.randperm(len(val_data))[: self.hparams.persistence_subsample_size]
         self.data_for_pd = val_data[indices]
-        self.original_pd_over_2 = ripser(self.data_for_pd, maxdim=2, coeff=2)["dgms"]
-        self.original_pd_over_3 = ripser(self.data_for_pd, maxdim=2, coeff=3)["dgms"]
+        self.original_pds = compute_persistence_diagrams(self.data_for_pd)
 
         self.train_dataset = TensorDataset(train_data)
         self.val_dataset = TensorDataset(val_data)

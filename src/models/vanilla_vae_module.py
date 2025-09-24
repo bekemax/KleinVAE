@@ -4,6 +4,10 @@ import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
+import numpy as np
+from ripser import ripser
+from persim import bottleneck
+
 from argparse import Namespace
 from typing import Any, Dict, Tuple, Type
 
@@ -21,6 +25,7 @@ class VanillaVAEModule(pl.LightningModule):
         scheduler: LRScheduler | None = None,
         lr: float = 1e-3,
         kl_weight: float = 1.0,
+        topo_metric_freq: int = 10,
     ):
         super().__init__()
         # Using save_hyperparameters() automatically logs these values
@@ -29,6 +34,7 @@ class VanillaVAEModule(pl.LightningModule):
         self.latent_dim = latent_dim
         self.lr = lr
         self.kl_weight = kl_weight
+        self.topo_metric_freq = topo_metric_freq
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
         """Standard reparameterization trick: z = mu + epsilon * std."""
@@ -85,6 +91,53 @@ class VanillaVAEModule(pl.LightningModule):
         z = torch.randn(num_samples, self.latent_dim, device=device)
         samples = self.model.decode(z)
         return samples
+
+    def on_validation_epoch_end(self):
+        """
+        Calculates topological metrics, but only every N epochs.
+
+        ```To reduce computational cost, topological similarity metrics (bottleneck distance) were computed every 10 validation epochs.```
+
+        """
+        is_last_epoch = self.current_epoch == self.trainer.max_epochs - 1  # to always compute at the end
+        if (self.current_epoch + 1) % self.topo_metric_freq == 0 or is_last_epoch:
+            print(f"\n--- Epoch {self.current_epoch}: Calculating topological metrics ---")
+
+            # 1. Generate reconstructions
+            with torch.no_grad():
+                recon_x, _, _ = self.forward(self.trainer.datamodule.data_for_pd.to(self.device))
+
+            # 2. Compute PDs and Bottleneck Distances
+            reconstructed_pd_over_2 = ripser(recon_x, maxdim=2, coeff=2)["dgms"]
+            reconstructed_pd_over_3 = ripser(recon_x, maxdim=2, coeff=3)["dgms"]
+
+            bottlenecks_over_2 = np.array(
+                [bottleneck(self.trainer.datamodule.original_pd_over_2[i], reconstructed_pd_over_2[i]) for i in range(3)]
+            )
+            bottlenecks_over_3 = np.array(
+                [bottleneck(self.trainer.datamodule.original_pd_over_3[i], reconstructed_pd_over_3[i]) for i in range(3)]
+            )
+
+            total_dist_over_2 = np.linalg.norm(bottlenecks_over_2).__float__()
+            total_dist_over_3 = np.linalg.norm(bottlenecks_over_3).__float__()
+
+            # 3. Log the metrics
+            for i in range(3):
+                self.log(f"bottleneck_over_2_dim_{i}", bottlenecks_over_2[i], prog_bar=True)
+                self.log(f"bottleneck_over_3_dim_{i}", bottlenecks_over_3[i], prog_bar=True)
+            self.log("total_bottleneck_over_2", total_dist_over_2, prog_bar=True)
+            self.log("total_bottleneck_over_3", total_dist_over_3, prog_bar=True)
+
+            print(f"--- Finished topological metrics. Total Distances = {total_dist_over_2:.4f}, {total_dist_over_3:.4f} ---\n")
+
+        if is_last_epoch:
+            print("Caching final metric and diagram for on_train_end.")
+            self.final_reconstructed_pd_over_2 = reconstructed_pd_over_2
+            self.final_reconstructed_pd_over_3 = reconstructed_pd_over_3
+            self.final_bottlenecks_over_2 = bottlenecks_over_2
+            self.final_bottlenecks_over_3 = bottlenecks_over_3
+            self.final_total_dist_over_2 = total_dist_over_2
+            self.final_total_dist_over_3 = total_dist_over_3
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

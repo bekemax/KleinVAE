@@ -1,6 +1,13 @@
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
-from typing import Callable, Tuple, Union
+from ripser import ripser
+from persim import bottleneck, plot_diagrams
+
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 
 def project_to_torus(points: torch.Tensor, stack: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
@@ -89,5 +96,42 @@ def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch
     print(f"Preimages: {preimages}")
     if criterion(preimages):
         return preimages
-    else:
         return preimage_of_torus_recursive(preimages, criterion)
+
+
+def compute_persistence_diagrams(data: torch.Tensor, maxdim: int = 2, coeffs: List[int] = [2, 3]) -> Dict[int, List[np.ndarray]]:
+    diagrams = {}
+    for coeff in coeffs:
+        diagram = ripser(data, maxdim=maxdim, coeff=coeff)["dgms"]
+        diagrams[coeff] = diagram
+    return diagrams
+
+
+def compute_pairwise_bottlenecks(
+    original_diagrams: Dict[int, List[np.ndarray]], reconstructed_diagrams: Dict[int, List[float]]
+) -> Dict[int, np.ndarray]:
+    bottlenecks = {}
+    for coeff in original_diagrams.keys():
+        bottlenecks[coeff] = np.array(
+            [bottleneck(original_diagrams[coeff][i], reconstructed_diagrams[coeff][i]) for i in range(len(original_diagrams[coeff]))]
+        )
+    return bottlenecks
+
+
+def plot_persistence_diagram(
+    diagram: List[np.ndarray], title: str = "Persistence Diagram", ax: Optional[Axes] = None
+) -> Union[Axes, Tuple[Figure, Axes]]:
+    return_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        return_fig = True
+    plot_diagrams(diagram, ax=ax)
+
+    # Set title and labels
+    ax.set_title(title)
+    ax.set_xlabel("Birth")
+    ax.set_ylabel("Death")
+    if return_fig:
+        return fig, ax
+    else:
+        return ax
