@@ -1,16 +1,17 @@
 _target_: src.models.torus_vae_module.TorusVAEModule
 
 # TorusVAE hyperparameters
-sigma2: 5.0
-lr: 0.001
-batch_size: 32
-kl_weight: 0.1
+sigma2: 0.1
+lr: 1e-3
+batch_size: ${..data.batch_size}
+kl_weight: 1e-2
+topo_metric_freq: 10
 
 # SimpleVAE network configuration
 model:
   _target_: src.models.components.vae.SimpleVAE
-  input_dim: 1600 # 40x40 for circles dataset
-  hidden_dims: [128, 64, 32]
+  input_dim: 900 # 30x30 for circles dataset
+  hidden_dims: [1024, 512, 128, 32]
   latent_dim: 2
 
 # Optimizer configuration

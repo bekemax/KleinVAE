@@ -152,8 +152,8 @@ class KleinVAEModule(pl.LightningModule):
                 self.log(f"total_bottleneck_over_{k}", total_bottlenecks[k], prog_bar=True)
 
             # 4. Log the PDs
-            title2 = "Reconstructed PD over $\mathbb{Z}_2$ at Epoch " + str(self.current_epoch)
-            title3 = "Reconstructed PD over $\mathbb{Z}_3$ at Epoch " + str(self.current_epoch)
+            title2 = "Reconstructed PD over $\mathbb{Z}_2$ at Epoch " + str(self.current_epoch + 1)
+            title3 = "Reconstructed PD over $\mathbb{Z}_3$ at Epoch " + str(self.current_epoch + 1)
             fig2, _ = plot_persistence_diagram(diagram=reconstructed_diagrams[2], title=title2)  # type: ignore
             fig3, _ = plot_persistence_diagram(diagram=reconstructed_diagrams[3], title=title3)  # type: ignore
             self.logger.experiment.log(

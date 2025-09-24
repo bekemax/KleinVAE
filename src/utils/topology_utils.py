@@ -1,6 +1,8 @@
 import torch
 import numpy as np
+
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
@@ -135,3 +137,60 @@ def plot_persistence_diagram(
         return fig, ax
     else:
         return ax
+
+
+def plot_persistence_diagram_detailed(diagram: List[np.ndarray], title: str, ax: Axes, show_ylabels: bool = True):
+    """
+    Plots a detailed, black-and-white persistence diagram on a given Axes object.
+
+    Args:
+        diagram: A list of numpy arrays [H0, H1, H2, ...].
+        title: The title for the subplot.
+        ax: The Matplotlib Axes object to draw on.
+        show_ylabels: Whether to show the y-axis labels and ticks.
+    """
+    # Plot H1 and H2 with specific markers
+    if len(diagram) > 1 and diagram[1].size > 0:
+        ax.scatter(diagram[1][:, 0], diagram[1][:, 1], marker=".", color="black", s=100, label="$H_1$")
+    if len(diagram) > 2 and diagram[2].size > 0:
+        ax.scatter(diagram[2][:, 0], diagram[2][:, 1], marker="+", color="black", s=350, label="$H_2$")
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    max_limit = max(xlim[1], ylim[1])
+    # Calculate the total range of the plot's data
+    data_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0])
+
+    # Set the radius to be a small fraction of the data range (e.g., 3%)
+    dynamic_radius = data_range * 0.03
+
+    # Draw the diagonal line based on this dynamic limit
+    ax.plot([0, max_limit], [0, max_limit], color="black", alpha=0.3)
+
+    # Circle the 2nd most persistent H1 point
+    if len(diagram) > 1 and diagram[1].shape[0] > 1:
+        lifetimes_h1 = diagram[1][:, 1] - diagram[1][:, 0]
+        idx_h1 = np.argsort(lifetimes_h1)[-2]
+        point_h1 = diagram[1][idx_h1, :]
+        ax.add_patch(Circle((point_h1[0], point_h1[1]), radius=dynamic_radius, edgecolor="black", fill=False))
+
+    # Circle the most persistent H2 point
+    if len(diagram) > 2 and diagram[2].shape[0] > 0:
+        lifetimes_h2 = diagram[2][:, 1] - diagram[2][:, 0]
+        idx_h2 = np.argsort(lifetimes_h2)[-1]
+        point_h2 = diagram[2][idx_h2, :]
+        ax.add_patch(Circle((point_h2[0], point_h2[1]), radius=dynamic_radius, edgecolor="black", fill=False))
+
+    # --- Formatting ---
+    ax.set_aspect(1)
+    ax.set_title(title, fontsize=30)
+    ax.set_xlabel("Birth time", fontsize=17)
+    ax.tick_params(axis="both", which="major", labelsize=15)
+
+    if show_ylabels:
+        ax.set_ylabel("Death time", fontsize=17)
+    else:
+        ax.set_yticks([])
+
+    ax.legend(loc="lower right", prop={"size": 17})
+    return ax
