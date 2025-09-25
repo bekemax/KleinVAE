@@ -12,7 +12,7 @@ from persim import bottleneck, plot_diagrams
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 
-def project_to_torus(points: torch.Tensor, stack: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
     [0, 2pi) x [0, 2pi) of the torus by wrapping u and v according to the identifications:

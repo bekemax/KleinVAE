@@ -1,4 +1,10 @@
-from src.utils.topology_utils import compute_pairwise_bottlenecks, compute_persistence_diagrams, plot_persistence_diagram, project_to_klein
+from src.utils.topology_utils import (
+    compute_pairwise_bottlenecks,
+    compute_persistence_diagrams,
+    plot_persistence_diagram,
+    project_to_klein,
+    project_to_torus,
+)
 from .components.vae import SimpleVAE
 
 import lightning as pl
@@ -120,11 +126,11 @@ class KleinVAEModule(pl.LightningModule):
 
     def _generate_reconstructions(self):
         with torch.no_grad():
-            recon_x, _, _ = self.forward(self.trainer.datamodule.data_for_pd.to(self.device))
-        return recon_x
+            recon_x, mu, L = self.forward(self.trainer.datamodule.data_for_pd.to(self.device))
+        return recon_x, mu, L
 
     def _generate_log_data(self):
-        recon_x = self._generate_reconstructions()
+        recon_x, _, _ = self._generate_reconstructions()
         reconstructed_diagrams = compute_persistence_diagrams(recon_x)
         bottlenecks = compute_pairwise_bottlenecks(self.trainer.datamodule.original_pds, reconstructed_diagrams)
         total_bottlenecks = {k: np.linalg.norm(v).__float__() for k, v in bottlenecks.items()}
@@ -164,6 +170,14 @@ class KleinVAEModule(pl.LightningModule):
             plt.close(fig3)
 
             print(f"--- Finished topological metrics. Total Distances = {total_bottlenecks[2]:.4f}, {total_bottlenecks[3]:.4f} ---\n")
+
+            # 4.5 Computing var of latent codes
+            with torch.no_grad():
+                mu, log_sigma, non_diag = self.encode(self.trainer.datamodule.data_for_pd.to(self.device))
+                z_on_plane, _ = self.reparameterize(mu, log_sigma, non_diag)
+                z_on_torus = project_to_torus(z_on_plane, stack=True)
+                var_z = torch.sum(torch.var(z_on_torus, dim=0))
+                self.log("var_z", var_z, prog_bar=True)
 
         if is_last_epoch:
             print("Caching final metric and diagram for on_train_end.")

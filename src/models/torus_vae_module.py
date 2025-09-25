@@ -160,6 +160,14 @@ class TorusVAEModule(pl.LightningModule):
 
             print(f"--- Finished topological metrics. Total Distances = {total_bottlenecks[2]:.4f}, {total_bottlenecks[3]:.4f} ---\n")
 
+            # 4.5 Computing var of latent codes
+            with torch.no_grad():
+                mu, log_sigma, non_diag = self.encode(self.trainer.datamodule.data_for_pd.to(self.device))
+                z_on_plane, _ = self.reparameterize(mu, log_sigma, non_diag)
+                z_on_torus = project_to_torus(z_on_plane, stack=True)
+                var_z = torch.sum(torch.var(z_on_torus, dim=0))
+                self.log("var_z", var_z, prog_bar=True)
+
         if is_last_epoch:
             print("Caching final metric and diagram for on_train_end.")
             self.final_reconstructed_pds = reconstructed_diagrams

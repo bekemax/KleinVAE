@@ -62,8 +62,9 @@ class VanillaVAEModule(pl.LightningModule):
         recon_loss = F.mse_loss(recon_x, x.view(x.size(0), -1), reduction="sum") / x.shape[0]
 
         # KL Divergence
-        # analytical formula for KL(N(mu, sigma^2) || N(0, 1))
-        kl_div = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=1)
+        # analytical formula for KL(N(mu, sigma^2) || N(0, p) where p = N(0, prior_scale^2 * I)
+        prior_var = 0.1**2  # prior_scale**2
+        kl_div = -0.5 * torch.sum(1 + torch.log(torch.tensor(prior_var)) + log_var - (mu.pow(2) + log_var.exp()) / prior_var, dim=1)
         kl_div = kl_div.mean()
 
         total_loss = recon_loss + self.kl_weight * kl_div
@@ -140,6 +141,13 @@ class VanillaVAEModule(pl.LightningModule):
             plt.close(fig3)
 
             print(f"--- Finished topological metrics. Total Distances = {total_bottlenecks[2]:.4f}, {total_bottlenecks[3]:.4f} ---\n")
+
+            # 4.5 Computing var of latent codes
+            with torch.no_grad():
+                mu, log_var, _ = self.model.encode(self.trainer.datamodule.data_for_pd.to(self.device))
+                z = self.reparameterize(mu, log_var)
+                var_z = torch.sum(torch.var(z, dim=0))
+                self.log("var_z", var_z, prog_bar=True)
 
         if is_last_epoch:
             print("Caching final metric and diagram for on_train_end.")

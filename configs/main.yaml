@@ -31,6 +31,7 @@ defaults:
 task_name: "train"
 
 hidden_dims: [64]
+kl_weight: 0.001
 
 model_name: ${hydra:runtime.choices.model}
 
