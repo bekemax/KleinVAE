@@ -15,6 +15,7 @@ class SimpleVAE(nn.Module):
         """
         super(SimpleVAE, self).__init__()
         self.latent_dim = latent_dim
+        self.hidden_dims = hidden_dims
         # Encoder
         encoder_layers = []
         prev_dim = input_dim

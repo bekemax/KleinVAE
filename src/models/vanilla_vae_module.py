@@ -31,6 +31,7 @@ class VanillaVAEModule(pl.LightningModule):
     ):
         super().__init__()
         # Using save_hyperparameters() automatically logs these values
+        self.hparams.hidden_dims = model.hidden_dims
         self.save_hyperparameters(ignore=["model"])
         self.model = model
         self.latent_dim = latent_dim
@@ -74,7 +75,7 @@ class VanillaVAEModule(pl.LightningModule):
         recon_x, mu, log_var = self.forward(x)
         loss, recon_loss, kl = self._vae_loss(x, recon_x, mu, log_var)
 
-        self.log_dict({"train_loss": loss, "train_recon_loss": recon_loss, "train_kl_div": kl}, prog_bar=True)
+        self.log_dict({"train_loss": loss, "recon_loss": recon_loss, "kl_div": kl}, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):

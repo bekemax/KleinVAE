@@ -26,5 +26,5 @@ scheduler:
 model:
   _target_: src.models.components.vae.SimpleVAE
   input_dim: 900 # 30x30 for circles dataset
-  hidden_dims: [1024, 512, 128, 32]
+  hidden_dims: ${hidden_dims} #[1024, 512, 128, 32]
   latent_dim: 2

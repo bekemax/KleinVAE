@@ -133,7 +133,7 @@ class TorusVAEModule(pl.LightningModule):
 
         """
         is_last_epoch = self.current_epoch == self.trainer.max_epochs - 1  # to always compute at the end
-        if (self.current_epoch + 1) % self.topo_metric_freq == 0 or is_last_epoch:
+        if ((self.current_epoch + 1) % self.topo_metric_freq == 0) or is_last_epoch:
             print(f"\n--- Epoch {self.current_epoch}: Calculating topological metrics ---")
 
             log_data = self._generate_log_data()
