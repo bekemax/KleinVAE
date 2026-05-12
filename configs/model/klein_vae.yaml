@@ -1,11 +1,9 @@
 _target_: src.models.klein_vae_module.KleinVAEModule
 
 # KleinVAE hyperparameters
-sigma2: 0.1
+prior_std: 0.1
 lr: 0.01
-batch_size: ${..data.batch_size}
 kl_weight: ${kl_weight}
-topo_metric_freq: 10
 
 # Optimizer configuration
 optimizer:

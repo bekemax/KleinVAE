@@ -135,6 +135,7 @@ dmypy.json
 !.vscode/extensions.json
 *.code-workspace
 **/.vscode
+.VSCodeCounter/
 
 # JetBrains
 .idea/

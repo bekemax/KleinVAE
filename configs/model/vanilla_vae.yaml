@@ -1,10 +1,9 @@
-_target_: src.models.vanilla_vae_module.VanillaVAEModule
+_target_: src.models.vae_module.VAEModule
 
 # VAE hyperparameters
 latent_dim: 2
 lr: 0.01
 kl_weight: ${kl_weight}
-topo_metric_freq: 10
 
 # SimpleVAE network configuration
 model:

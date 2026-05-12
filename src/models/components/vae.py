@@ -1,6 +1,7 @@
+import torch
 from torch import nn
 
-from typing import List
+from typing import List, Tuple
 
 
 class SimpleVAE(nn.Module):
@@ -10,8 +11,10 @@ class SimpleVAE(nn.Module):
         Args:
             input_dim (int): Dimension of the input data.
             hidden_dims (List[int]): List of hidden layer dimensions (same for encoder and decoder, but reversed for decoder).
-        Encoder output is fixed to 3 (for 2D mean, and LT matrix L s.t. \Sigma = LL^T).
-        Decoder input is fixed to 2 (z is always 2D).
+            latent_dim (int): Dimension of the latent space. Default is 2.
+
+        The encoder outputs the latent mean plus one scalar log-variance. That is an
+        isotropic posterior: q(z|x) = N(mu(x), sigma(x)^2 I).
         """
         super(SimpleVAE, self).__init__()
         self.latent_dim = latent_dim
@@ -23,7 +26,7 @@ class SimpleVAE(nn.Module):
             encoder_layers.append(nn.Linear(prev_dim, h_dim))
             encoder_layers.append(nn.LeakyReLU())
             prev_dim = h_dim
-        encoder_layers.append(nn.Linear(prev_dim, latent_dim + 1))  # Output: latent_dim mean, sigma /////_X, sigma_Y, non_diag
+        encoder_layers.append(nn.Linear(prev_dim, latent_dim + 1))
         self.encoder = nn.Sequential(*encoder_layers)
 
         # Decoder
@@ -37,22 +40,23 @@ class SimpleVAE(nn.Module):
         decoder_layers.append(nn.Sigmoid())  # Assuming input is normalized between 0 and 1
         self.decoder = nn.Sequential(*decoder_layers)
 
-    def encode(self, x):
+    def encode(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = x.view(x.size(0), -1)
         h = self.encoder(x)
-        # Output: [mu_x, mu_y, log_sigma_x, log_sigma_y, non_diag]
         mu = h[..., : self.latent_dim]
-        log_sigma = h[..., self.latent_dim : self.latent_dim + 1]
-        # non_diag = h[..., 4:5]
-        return mu, log_sigma, None
+        log_var = h[..., self.latent_dim : self.latent_dim + 1]
+        return mu, log_var
 
-    def reparameterize(self, mu, log_sigma, rho):
-        raise NotImplementedError("Reparameterization is implemented in the LightningModule.")
+    def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(mu)
+        return mu + eps * std
 
-    def decode(self, z):
+    def decode(self, z) -> torch.Tensor:
         return self.decoder(z)
 
-    def forward(self, x):
-        mu, log_sigma, rho = self.encode(x)
-        z = self.reparameterize(mu, log_sigma, rho)
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mu, log_var = self.encode(x)
+        z = self.reparameterize(mu, log_var)
         recon_x = self.decode(z)
-        return recon_x, mu, log_sigma, rho
+        return recon_x, mu, log_var
