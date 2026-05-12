@@ -4,3 +4,5 @@ topology_metrics:
   field_orders: [2, 3]
   save_figures: True
   save_artifacts: True
+  log_reconstruction_pd: True
+  log_latent_pd: True

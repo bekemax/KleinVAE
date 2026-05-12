@@ -6,8 +6,6 @@ import torch
 from torch.optim.lr_scheduler import LRScheduler
 
 from src.models.components.vae import SimpleVAE
-
-
 class VAEModule(pl.LightningModule):
     """Standard VAE LightningModule.
 

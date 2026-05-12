@@ -9,14 +9,19 @@ from matplotlib.axes import Axes
 from ripser import ripser
 from persim import bottleneck, plot_diagrams
 
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+
+
+TORUS_U_PERIOD = 2.0
+TORUS_V_PERIOD = 1.0
+KLEIN_U_WIDTH = 1.0
 
 
 def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
-    [0, 2pi) x [0, 2pi) of the torus by wrapping u and v according to the identifications:
-        - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l) for k,l in Z
+    [0, 2) x [0, 1) of the torus by wrapping u and v according to the identifications:
+        - (u, v) ~ (u + 2k, v + l) for k,l in Z
     Args:
         points: Tensor of shape (..., 2) representing points in R^2
         stack: If True, return a stacked tensor of shape (..., 2). If False, return a tuple of tensors (u_mod, v_mod).
@@ -25,8 +30,8 @@ def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor 
         If stack is False, a tuple of tensors (u_mod, v_mod) each of shape (...,).
     """
     u, v = points[..., 0], points[..., 1]
-    u_mod = torch.remainder(u, 2)
-    v_mod = torch.remainder(v, 1)
+    u_mod = torch.remainder(u, TORUS_U_PERIOD)
+    v_mod = torch.remainder(v, TORUS_V_PERIOD)
     if stack:
         return torch.stack([u_mod, v_mod], dim=-1)
     else:
@@ -36,17 +41,17 @@ def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor 
 def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
-    [0, 2pi) x [0, pi) of the Klein bottle by wrapping u and v according to the identifications:
-        - (theta1, theta2) ~ (theta1 + 2pi k, theta2 + 2pi l)    for k,l in Z (torus gluing)
-        - (theta1, theta2) ~ (theta1 - pi, -theta1 (mod 2pi))              (the “half‐twist” that makes K non-orientable)
+    [0, 1) x [0, 1) of the Klein bottle by wrapping u and v according to the identifications:
+        - (u, v) ~ (u, v + 1)
+        - (u, v) ~ (u + 1, 1 - v)
     """
 
     u_mod, v_mod = project_to_torus(points)
 
-    mask_twist = u_mod >= 1
+    mask_twist = u_mod >= KLEIN_U_WIDTH
     if mask_twist.any():
-        u_mod[mask_twist] = u_mod[mask_twist] - 1
-        v_mod[mask_twist] = 1 - v_mod[mask_twist]  # torch.remainder(-v_mod[mask_twist], 1)  # 1 - v_mod[mask_twist]
+        u_mod[mask_twist] = u_mod[mask_twist] - KLEIN_U_WIDTH
+        v_mod[mask_twist] = TORUS_V_PERIOD - v_mod[mask_twist]
 
     return torch.stack([u_mod, v_mod], dim=-1)
 
@@ -63,27 +68,28 @@ def preimage_of_klein(points: torch.Tensor) -> torch.Tensor:
             - the third dimension contains the x and y coordinates.
     """
     xs, ys = points[..., 0], points[..., 1]
-    xs_torus = torch.stack([xs, xs + torch.pi], dim=-1)
-    ys_torus = torch.stack([ys, torch.remainder(-ys, 2 * torch.pi)], dim=-1)
-
-    # print(torch.stack([xs_torus, ys_torus], dim=-1).shape)
-
-    return torch.stack([xs_torus, ys_torus], dim=-1).squeeze(1)
+    first_preimage = torch.stack([xs, ys], dim=-1)
+    second_preimage = torch.stack([xs + KLEIN_U_WIDTH, TORUS_V_PERIOD - ys], dim=-1)
+    return torch.stack([first_preimage, second_preimage], dim=-2)
 
 
 def preimage_of_torus_grid(points, grid_size=1):
     """
     Given points in the torus, return all preimages in a grid around each point.
     Args:
-        points: Tensor of shape (..., 2) representing points in the torus.
+        points: Tensor of shape (..., 2) or (..., k, 2) representing points in the torus.
         grid_size: Size of the grid to generate preimages around each point.
     Returns:
-        Tensor of shape (..., (2 * grid_size + 1) ** 2, 2) representing preimages in the torus.
+        Tensor of shape (..., k * (2 * grid_size + 1) ** 2, 2) representing nearby preimages in the torus.
     """
-    xs, ys = points[..., 0], points[..., 1]
+    pts = torch.as_tensor(points, dtype=torch.float32)
+    if pts.ndim == 2:
+        pts = pts.unsqueeze(-2)
+
+    xs, ys = pts[..., 0], pts[..., 1]
     shifts = range(-grid_size, grid_size + 1)
-    all_preimages = [torch.stack([xs + 2 * torch.pi * i, ys + 2 * torch.pi * j], dim=-1) for i in shifts for j in shifts]
-    return torch.cat(all_preimages, dim=1)
+    all_preimages = [torch.stack([xs + TORUS_U_PERIOD * i, ys + TORUS_V_PERIOD * j], dim=-1) for i in shifts for j in shifts]
+    return torch.cat(all_preimages, dim=-2)
 
 
 def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch.Tensor], bool]):
@@ -91,8 +97,9 @@ def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch
     Given points in the torus, recursively find preimages until the criterion is satisfied.
     The criterion is a function that takes a tensor of points and returns True if the points satisfy the condition.
     """
-    grid = 2 * torch.pi * torch.linspace(-1, 1, 3)
-    meshgrid = torch.meshgrid(grid, grid, indexing="ij")
+    grid_x = TORUS_U_PERIOD * torch.linspace(-1, 1, 3)
+    grid_y = TORUS_V_PERIOD * torch.linspace(-1, 1, 3)
+    meshgrid = torch.meshgrid(grid_x, grid_y, indexing="ij")
     meshgrid_points = torch.column_stack([meshgrid[0].flatten(), meshgrid[1].flatten()])
     preimages = torch.Tensor([meshgrid_points + point for point in points]).reshape(-1, 2)
     print(f"Preimages: {preimages}")
@@ -101,10 +108,54 @@ def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch
         return preimage_of_torus_recursive(preimages, criterion)
 
 
-def compute_persistence_diagrams(data: torch.Tensor, maxdim: int = 2, coeffs: List[int] = [2, 3]) -> Dict[int, List[np.ndarray]]:
+def klein_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: int = 1) -> torch.Tensor:
+    """
+    Compute pairwise distances on the Klein bottle quotient.
+
+    Points are assumed to lie in the Klein fundamental domain [0, 1) x [0, 1).
+    Distances are induced from the Euclidean metric on the universal cover by taking
+    the minimum over nearby deck-transformed lifts.
+    """
+    pts = torch.as_tensor(points, dtype=torch.float32)
+    all_lifts = preimage_of_torus_grid(preimage_of_klein(pts), grid_size=grid_size)
+
+    diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
+    distances = torch.linalg.norm(diffs, dim=-1).min(dim=-1).values
+    distances.fill_diagonal_(0.0)
+    return 0.5 * (distances + distances.T)
+
+
+def torus_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: int = 1) -> torch.Tensor:
+    """
+    Compute pairwise distances on the torus quotient.
+
+    Points are assumed to lie in the torus fundamental domain [0, 2) x [0, 1).
+    Distances are induced from the Euclidean metric on the universal cover by taking
+    the minimum over nearby periodic lifts.
+    """
+    pts = torch.as_tensor(points, dtype=torch.float32)
+    all_lifts = preimage_of_torus_grid(pts, grid_size=grid_size)
+
+    diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
+    distances = torch.linalg.norm(diffs, dim=-1).min(dim=-1).values
+    distances.fill_diagonal_(0.0)
+    return 0.5 * (distances + distances.T)
+
+
+def compute_persistence_diagrams(
+    data: Union[torch.Tensor, np.ndarray],
+    maxdim: int = 2,
+    coeffs: Optional[Sequence[int]] = None,
+    distance_matrix: bool = False,
+) -> Dict[int, List[np.ndarray]]:
+    coeff_list = list(coeffs) if coeffs is not None else [2, 3]
+    if isinstance(data, torch.Tensor):
+        data_array = data.detach().cpu().numpy()
+    else:
+        data_array = np.asarray(data)
     diagrams = {}
-    for coeff in coeffs:
-        diagram = ripser(data, maxdim=maxdim, coeff=coeff)["dgms"]
+    for coeff in coeff_list:
+        diagram = ripser(data_array, maxdim=maxdim, coeff=coeff, distance_matrix=distance_matrix)["dgms"]
         diagrams[coeff] = diagram
     return diagrams
 
