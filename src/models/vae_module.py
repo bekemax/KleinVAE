@@ -1,8 +1,8 @@
-from typing import Any, Callable, Dict, Tuple
+from collections.abc import Callable
+from typing import Any, Dict, Tuple
 
 import lightning as pl
 import torch
-import torch.nn.functional as F
 from torch.optim.lr_scheduler import LRScheduler
 
 from src.models.components.vae import SimpleVAE
@@ -18,16 +18,16 @@ class VAEModule(pl.LightningModule):
     def __init__(
         self,
         model: SimpleVAE,
-        latent_dim: int,
         optimizer: Callable[..., torch.optim.Optimizer],
-        scheduler: LRScheduler | None = None,
+        recon_loss: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        scheduler: Callable[..., LRScheduler] | None = None,
         lr: float = 1e-3,
         kl_weight: float = 1.0,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters(ignore=["model"])
+        self.save_hyperparameters(ignore=["model", "recon_loss"])
         self.model = model
-        self.latent_dim = latent_dim
+        self.recon_loss = recon_loss
         self.lr = lr
         self.kl_weight = kl_weight
 
@@ -35,7 +35,17 @@ class VAEModule(pl.LightningModule):
         for param in self.model.encoder.parameters():
             param.requires_grad = flag
 
-    def vae_loss(
+    def reconstruction_loss(self, x: torch.Tensor, recon_x: torch.Tensor) -> torch.Tensor:
+        target_x = x if x.shape == recon_x.shape else x.reshape(x.size(0), -1)
+        recon_loss = self.recon_loss(recon_x, target_x)
+        if getattr(self.recon_loss, "reduction", None) == "sum":
+            recon_loss = recon_loss / x.shape[0]
+        return recon_loss
+
+    def kl_loss(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
+        return 0.5 * torch.sum(mu.pow(2) + log_var.exp() - log_var - 1, dim=1).mean()
+
+    def _vae_loss(
         self, x: torch.Tensor, recon_x: torch.Tensor, mu: torch.Tensor, log_var: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute the VAE loss.
@@ -60,9 +70,8 @@ class VAEModule(pl.LightningModule):
             A tuple containing total loss, reconstruction loss, and KL loss.
         """
 
-        recon_loss = F.mse_loss(recon_x, x.view(x.size(0), -1), reduction="sum") / x.shape[0]
-        kl_div = 0.5 * torch.sum(mu.pow(2) + log_var.exp() - log_var - 1, dim=1).mean()
-
+        recon_loss = self.reconstruction_loss(x, recon_x)
+        kl_div = self.kl_loss(mu, log_var)
         total_loss = recon_loss + self.kl_weight * kl_div
         return total_loss, recon_loss, kl_div
 
@@ -72,7 +81,7 @@ class VAEModule(pl.LightningModule):
     def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:
         x = batch[0]
         recon_x, mu, log_var = self(x)
-        loss, recon_loss, kl = self.vae_loss(x, recon_x, mu, log_var)
+        loss, recon_loss, kl = self._vae_loss(x, recon_x, mu, log_var)
 
         self.log("train_loss", loss, on_epoch=True, prog_bar=True, batch_size=x.shape[0])
         self.log("train_recon_loss", recon_loss, on_epoch=True, batch_size=x.shape[0])
@@ -83,7 +92,7 @@ class VAEModule(pl.LightningModule):
     def validation_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor:
         x = batch[0]
         recon_x, mu, log_var = self(x)
-        loss, recon_loss, kl = self.vae_loss(x, recon_x, mu, log_var)
+        loss, recon_loss, kl = self._vae_loss(x, recon_x, mu, log_var)
 
         self.log("val_loss", loss, on_epoch=True, prog_bar=True, batch_size=x.shape[0])
         self.log("val_recon_loss", recon_loss, on_epoch=True, batch_size=x.shape[0])
@@ -113,7 +122,7 @@ class VAEModule(pl.LightningModule):
 if __name__ == "__main__":
     latent_dim = 4
     model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64], latent_dim=latent_dim)
-    vae_module = VAEModule(model=model, latent_dim=latent_dim, optimizer=torch.optim.Adam)
+    vae_module = VAEModule(model=model, optimizer=torch.optim.Adam, recon_loss=torch.nn.MSELoss(reduction="sum"))
 
     x = torch.randn(16, 28 * 28)
     recon_x, mu, log_var = vae_module(x)

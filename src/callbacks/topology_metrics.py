@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -18,19 +18,22 @@ class TopologyMetricsCallback(Callback):
     def __init__(
         self,
         every_n_epochs: int = 10,
+        field_orders: Sequence[int] = (2, 3),
         save_figures: bool = True,
         save_artifacts: bool = True,
     ) -> None:
         self.every_n_epochs = every_n_epochs
+        self.field_orders = tuple(field_orders)
         self.save_figures = save_figures
         self.save_artifacts = save_artifacts
+        self.original_pds: Optional[dict[int, list[np.ndarray]]] = None
         self.final_reconstructed_pds: Optional[dict[int, list[np.ndarray]]] = None
         self.final_bottlenecks: Optional[dict[int, np.ndarray]] = None
         self.final_total_dist: Optional[dict[int, float]] = None
 
     def _has_eval_data(self, trainer: Trainer) -> bool:
         datamodule = trainer.datamodule  # type: ignore[union-attr]
-        return datamodule is not None and hasattr(datamodule, "data_for_pd") and hasattr(datamodule, "original_pds")
+        return datamodule is not None and hasattr(datamodule, "data_for_pd")
 
     def _eval_input(self, trainer: Trainer, pl_module: LightningModule) -> torch.Tensor:
         return trainer.datamodule.data_for_pd.to(pl_module.device)  # type: ignore[union-attr]
@@ -46,13 +49,17 @@ class TopologyMetricsCallback(Callback):
             recon_x, *_ = pl_module(self._eval_input(trainer, pl_module))
         return recon_x.detach().cpu()
 
+    def _get_original_diagrams(self, trainer: Trainer) -> dict[int, list[np.ndarray]]:
+        if self.original_pds is None:
+            data_for_pd = trainer.datamodule.data_for_pd.detach().cpu()  # type: ignore[union-attr]
+            self.original_pds = compute_persistence_diagrams(data_for_pd, coeffs=list(self.field_orders))
+        return self.original_pds
+
     def _generate_log_data(self, trainer: Trainer, pl_module: LightningModule) -> dict:
+        original_diagrams = self._get_original_diagrams(trainer)
         recon_x = self._generate_reconstructions(trainer, pl_module)
-        reconstructed_diagrams = compute_persistence_diagrams(recon_x)
-        bottlenecks = compute_pairwise_bottlenecks(
-            trainer.datamodule.original_pds,  # type: ignore[union-attr]
-            reconstructed_diagrams,  # type: ignore[union-attr]
-        )
+        reconstructed_diagrams = compute_persistence_diagrams(recon_x, coeffs=list(self.field_orders))
+        bottlenecks = compute_pairwise_bottlenecks(original_diagrams, reconstructed_diagrams)
         total_bottlenecks = {k: float(np.linalg.norm(v)) for k, v in bottlenecks.items()}
         return {
             "reconstructed_diagrams": reconstructed_diagrams,
@@ -72,17 +79,13 @@ class TopologyMetricsCallback(Callback):
         artifact_dir = Path(trainer.default_root_dir) / "persistence_diagrams"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        plot_persistence_diagram(  # type: ignore
-            diagram=reconstructed_diagrams[2],
-            title=rf"Reconstructed PD over $\mathbb{{Z}}_2$ at Epoch {epoch}",
-            ax=axes[0],
-        )
-        plot_persistence_diagram(  # type: ignore
-            diagram=reconstructed_diagrams[3],
-            title=rf"Reconstructed PD over $\mathbb{{Z}}_3$ at Epoch {epoch}",
-            ax=axes[1],
-        )
+        fig, axes = plt.subplots(1, len(self.field_orders), figsize=(6 * len(self.field_orders), 6), squeeze=False)
+        for ax, coeff in zip(axes[0], self.field_orders):
+            plot_persistence_diagram(
+                diagram=reconstructed_diagrams[coeff],
+                title=rf"Reconstructed PD over $\mathbb{{Z}}_{coeff}$ at Epoch {epoch}",
+                ax=ax,
+            )
         plt.tight_layout()
         figure_path = artifact_dir / f"reconstructed_pd_epoch_{epoch:03d}.png"
         fig.savefig(figure_path)
@@ -98,13 +101,16 @@ class TopologyMetricsCallback(Callback):
         original_pds: dict[int, list[np.ndarray]],
         reconstructed_pds: dict[int, list[np.ndarray]],
     ) -> Path:
-        fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+        fig, axes = plt.subplots(2, len(self.field_orders), figsize=(6 * len(self.field_orders), 12), squeeze=False)
         fig.suptitle("Final Persistence Diagram Comparison", fontsize=16)
 
-        plot_persistence_diagram(original_pds[2], title=r"Original PD over $\mathbb{Z}_2$", ax=axes[0, 0])
-        plot_persistence_diagram(reconstructed_pds[2], title=r"Reconstructed PD over $\mathbb{Z}_2$", ax=axes[0, 1])
-        plot_persistence_diagram(original_pds[3], title=r"Original PD over $\mathbb{Z}_3$", ax=axes[1, 0])
-        plot_persistence_diagram(reconstructed_pds[3], title=r"Reconstructed PD over $\mathbb{Z}_3$", ax=axes[1, 1])
+        for axis_idx, coeff in enumerate(self.field_orders):
+            plot_persistence_diagram(original_pds[coeff], title=rf"Original PD over $\mathbb{{Z}}_{coeff}$", ax=axes[0, axis_idx])
+            plot_persistence_diagram(
+                reconstructed_pds[coeff],
+                title=rf"Reconstructed PD over $\mathbb{{Z}}_{coeff}$",
+                ax=axes[1, axis_idx],
+            )
 
         plt.tight_layout(rect=(0, 0.03, 1, 0.95))
         plot_path = artifact_dir / "final_pd_comparison.png"
@@ -135,7 +141,8 @@ class TopologyMetricsCallback(Callback):
 
         self._save_reconstructed_pd_figures(trainer, reconstructed_diagrams)
 
-        pl_module.print(f"--- Finished topological metrics. Total Distances = {total_bottlenecks[2]:.4f}, {total_bottlenecks[3]:.4f} ---\n")
+        totals_msg = ", ".join(f"Z/{coeff}: {total_bottlenecks[coeff]:.4f}" for coeff in self.field_orders)
+        pl_module.print(f"--- Finished topological metrics. Total Distances = {totals_msg} ---\n")
 
         if is_last_epoch:
             self.final_reconstructed_pds = reconstructed_diagrams
@@ -158,20 +165,12 @@ class TopologyMetricsCallback(Callback):
         artifact_dir = Path(trainer.default_root_dir) / "persistence_diagrams"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        original_pds = trainer.datamodule.original_pds  # type: ignore[union-attr]
-        plot_path = self._save_final_pd_comparison_figure(artifact_dir, original_pds, self.final_reconstructed_pds)
+        original_pds = self._get_original_diagrams(trainer)
+        self._save_final_pd_comparison_figure(artifact_dir, original_pds, self.final_reconstructed_pds)
 
-        artifact_paths = [
-            artifact_dir / "original_pd_z2.npz",
-            artifact_dir / "original_pd_z3.npz",
-            artifact_dir / "reconstructed_pd_z2.npz",
-            artifact_dir / "reconstructed_pd_z3.npz",
-            plot_path,
-        ]
-        np.savez_compressed(artifact_paths[0], *original_pds[2])
-        np.savez_compressed(artifact_paths[1], *original_pds[3])
-        np.savez_compressed(artifact_paths[2], *self.final_reconstructed_pds[2])
-        np.savez_compressed(artifact_paths[3], *self.final_reconstructed_pds[3])
+        for coeff in self.field_orders:
+            np.savez_compressed(artifact_dir / f"original_pd_z{coeff}.npz", *original_pds[coeff])
+            np.savez_compressed(artifact_dir / f"reconstructed_pd_z{coeff}.npz", *self.final_reconstructed_pds[coeff])
 
         wandb_logger = self._wandb_logger(trainer)
         if wandb_logger is not None:

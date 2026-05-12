@@ -6,9 +6,6 @@ from sklearn.model_selection import train_test_split
 from argparse import Namespace
 
 
-from src.utils.topology_utils import compute_persistence_diagrams
-
-
 class CirclesDatamodule(LightningDataModule):
     hparams: Namespace
 
@@ -78,7 +75,6 @@ class CirclesDatamodule(LightningDataModule):
 
         indices = torch.randperm(len(val_data))[: self.hparams.persistence_subsample_size]
         self.data_for_pd = val_data[indices]
-        self.original_pds = compute_persistence_diagrams(self.data_for_pd)
 
         self.train_dataset = TensorDataset(train_data)
         self.val_dataset = TensorDataset(val_data)
@@ -98,5 +94,3 @@ if __name__ == "__main__":
     module.setup()
     filter = module.train_dataloader().dataset[0][0]
     print(f"Filter shape: {filter.shape}")  # Example usage
-    print(f"Original PD over Z/2: {module.original_pd_over_2}")
-    print(f"Original PD over Z/3: {module.original_pd_over_3}")

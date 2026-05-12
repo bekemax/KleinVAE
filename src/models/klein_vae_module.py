@@ -18,7 +18,7 @@ class KleinVAEModule(TorusVAEModule):
 
 if __name__ == "__main__":
     model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64])
-    vae_module = KleinVAEModule(model=model, optimizer=torch.optim.Adam)
+    vae_module = KleinVAEModule(model=model, optimizer=torch.optim.Adam, recon_loss=torch.nn.BCELoss())
 
     x = torch.randn(16, 28 * 28)
     recon_x, mu, log_var = vae_module(x)
