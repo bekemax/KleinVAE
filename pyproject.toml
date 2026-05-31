@@ -19,14 +19,15 @@ dependencies = [
     # -------- topology --------- #
     "persim>=0.3.8",
     "ripser>=0.6.12",
-    # --------- others ---------- #
-    "rootutils",
-    "wandb",
     # ---------- hydra ---------- #
     "hydra-core>=1.3.2",
     "rich==13.9.2",
     "omegaconf>=2.3.0",
     "hydra-colorlog>=1.2.0",
+    # --------- others ---------- #
+    "pytest>=9.0.3",
+    "rootutils",
+    "wandb",
 ]
 
 [project.optional-dependencies]

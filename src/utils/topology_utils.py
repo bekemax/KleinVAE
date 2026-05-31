@@ -49,11 +49,11 @@ def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
     u_mod, v_mod = project_to_torus(points)
 
     mask_twist = u_mod >= KLEIN_U_WIDTH
-    if mask_twist.any():
-        u_mod[mask_twist] = u_mod[mask_twist] - KLEIN_U_WIDTH
-        v_mod[mask_twist] = TORUS_V_PERIOD - v_mod[mask_twist]
+    u_projected = torch.where(mask_twist, u_mod - KLEIN_U_WIDTH, u_mod)
+    v_flipped = torch.remainder(TORUS_V_PERIOD - v_mod, TORUS_V_PERIOD)
+    v_projected = torch.where(mask_twist, v_flipped, v_mod)
 
-    return torch.stack([u_mod, v_mod], dim=-1)
+    return torch.stack([u_projected, v_projected], dim=-1)
 
 
 def preimage_of_klein(points: torch.Tensor) -> torch.Tensor:
@@ -116,7 +116,7 @@ def klein_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: in
     Distances are induced from the Euclidean metric on the universal cover by taking
     the minimum over nearby deck-transformed lifts.
     """
-    pts = torch.as_tensor(points, dtype=torch.float32)
+    pts = project_to_klein(torch.as_tensor(points, dtype=torch.float32))
     all_lifts = preimage_of_torus_grid(preimage_of_klein(pts), grid_size=grid_size)
 
     diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
@@ -133,7 +133,7 @@ def torus_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: in
     Distances are induced from the Euclidean metric on the universal cover by taking
     the minimum over nearby periodic lifts.
     """
-    pts = torch.as_tensor(points, dtype=torch.float32)
+    pts = project_to_torus(torch.as_tensor(points, dtype=torch.float32), stack=True)
     all_lifts = preimage_of_torus_grid(pts, grid_size=grid_size)
 
     diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
