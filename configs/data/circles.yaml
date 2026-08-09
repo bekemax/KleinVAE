@@ -1,6 +1,13 @@
 _target_: src.data.circles_datamodule.CirclesDatamodule
 image_linear_pixel_size: 30
 circle_radius: 0.3
-num_images: 10_000
-batch_size: 512
+num_images: 100_000
+batch_size: 1024
 persistence_subsample_size: 500
+train_fraction: 0.8
+val_fraction: 0.1
+seed: ${seed}
+split_seed: null
+shuffle_train: true
+generation_batch_size: 2048
+num_workers: 0

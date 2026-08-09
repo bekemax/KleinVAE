@@ -1,7 +1,7 @@
 [project]
 name = "kleinvae"
 version = "0.9.5"
-description = "Add your description here"
+description = "Variational autoencoders with Euclidean, torus, and Klein-bottle latent spaces"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

@@ -6,3 +6,6 @@ topology_metrics:
   save_artifacts: True
   log_reconstruction_pd: True
   log_latent_pd: True
+  scale_quantile: 0.9
+  topology_dimensions: [1, 2]
+  input_metric: ambient

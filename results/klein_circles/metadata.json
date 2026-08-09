@@ -1,0 +1,17 @@
+{
+  "training_seed": 28,
+  "evaluation_seed": 29,
+  "checkpoint_selection": "lowest validation loss",
+  "models": ["klein", "torus", "euclidean"],
+  "training_config": "configs/experiment/klein_circles.yaml",
+  "test_observations": 10000,
+  "topology_sample_size": 400,
+  "coefficient_fields": [2, 3],
+  "homology_dimensions": [1, 2],
+  "distance_normalization_quantile": 0.9,
+  "checkpoint_sha256": {
+    "klein": "443d76b3aa6a1d21c55f877973a709b19e61462754a1d5158ad11be8691e230b",
+    "torus": "9b01ed19caa413ee339e3ad98571a72def2c227900ddc1a883c59c9d3b32b802",
+    "euclidean": "df5aeadd19ecdf7ae7a3f5c1365da6cc075436bfebc53a9d11af0a6bda64876d"
+  }
+}

@@ -1,8 +1,11 @@
 _target_: src.models.vae_module.VAEModule
 
 # VAE hyperparameters
-lr: 0.01
+lr: 0.001
 kl_weight: ${kl_weight}
+prior_mean: 0.0
+prior_variance: 1.0
+scheduler_monitor: val_loss
 
 # SimpleVAE network configuration
 model:
@@ -10,9 +13,10 @@ model:
   input_dim: 900 # 30x30 for circles dataset
   hidden_dims: ${hidden_dims} #[1024, 512, 128, 32]
   latent_dim: 2
+  covariance_type: full
 
 recon_loss:
-  _target_: torch.nn.MSELoss
+  _target_: torch.nn.BCELoss
   reduction: sum
 
 # Optimizer configuration
@@ -27,5 +31,5 @@ scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
   _partial_: true
   mode: min
-  factor: 0.1
-  patience: 10
+  factor: 0.99
+  patience: 0

@@ -1,23 +1,20 @@
-import torch
-import numpy as np
+from collections.abc import Callable, Sequence
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
-from matplotlib.figure import Figure
+import numpy as np
+import torch
 from matplotlib.axes import Axes
-
-from ripser import ripser
+from matplotlib.figure import Figure
+from matplotlib.patches import Circle
 from persim import bottleneck, plot_diagrams
-
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
-
+from ripser import ripser
 
 TORUS_U_PERIOD = 2.0
 TORUS_V_PERIOD = 1.0
 KLEIN_U_WIDTH = 1.0
 
 
-def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
     [0, 2) x [0, 1) of the torus by wrapping u and v according to the identifications:
@@ -34,11 +31,10 @@ def project_to_torus(points: torch.Tensor, stack: bool = False) -> torch.Tensor 
     v_mod = torch.remainder(v, TORUS_V_PERIOD)
     if stack:
         return torch.stack([u_mod, v_mod], dim=-1)
-    else:
-        return u_mod, v_mod
+    return u_mod, v_mod
 
 
-def project_to_klein(points: torch.Tensor, eps: float = 1e-6):
+def project_to_klein(points: torch.Tensor) -> torch.Tensor:
     """
     Given (u, v) in R^2, project each pair (u, v) onto the fundamental domain
     [0, 1) x [0, 1) of the Klein bottle by wrapping u and v according to the identifications:
@@ -92,23 +88,22 @@ def preimage_of_torus_grid(points, grid_size=1):
     return torch.cat(all_preimages, dim=-2)
 
 
-def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch.Tensor], bool]):
+def preimage_of_torus_recursive(points: torch.Tensor, criterion: Callable[[torch.Tensor], bool]) -> torch.Tensor:
     """
     Given points in the torus, recursively find preimages until the criterion is satisfied.
     The criterion is a function that takes a tensor of points and returns True if the points satisfy the condition.
     """
-    grid_x = TORUS_U_PERIOD * torch.linspace(-1, 1, 3)
-    grid_y = TORUS_V_PERIOD * torch.linspace(-1, 1, 3)
+    grid_x = TORUS_U_PERIOD * torch.linspace(-1, 1, 3, device=points.device)
+    grid_y = TORUS_V_PERIOD * torch.linspace(-1, 1, 3, device=points.device)
     meshgrid = torch.meshgrid(grid_x, grid_y, indexing="ij")
     meshgrid_points = torch.column_stack([meshgrid[0].flatten(), meshgrid[1].flatten()])
-    preimages = torch.Tensor([meshgrid_points + point for point in points]).reshape(-1, 2)
-    print(f"Preimages: {preimages}")
+    preimages = (points[:, None, :] + meshgrid_points[None, :, :]).reshape(-1, 2)
     if criterion(preimages):
         return preimages
-        return preimage_of_torus_recursive(preimages, criterion)
+    return preimage_of_torus_recursive(preimages, criterion)
 
 
-def klein_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: int = 1) -> torch.Tensor:
+def klein_distance_matrix(points: torch.Tensor | np.ndarray, grid_size: int = 1) -> torch.Tensor:
     """
     Compute pairwise distances on the Klein bottle quotient.
 
@@ -121,11 +116,12 @@ def klein_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: in
 
     diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
     distances = torch.linalg.norm(diffs, dim=-1).min(dim=-1).values
-    distances.fill_diagonal_(0.0)
-    return 0.5 * (distances + distances.T)
+    distances = 0.5 * (distances + distances.T)
+    diagonal_mask = torch.eye(distances.shape[0], device=distances.device, dtype=torch.bool)
+    return distances.masked_fill(diagonal_mask, 0.0)
 
 
-def torus_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: int = 1) -> torch.Tensor:
+def torus_distance_matrix(points: torch.Tensor | np.ndarray, grid_size: int = 1) -> torch.Tensor:
     """
     Compute pairwise distances on the torus quotient.
 
@@ -138,16 +134,82 @@ def torus_distance_matrix(points: Union[torch.Tensor, np.ndarray], grid_size: in
 
     diffs = pts[:, None, None, :] - all_lifts[None, :, :, :]
     distances = torch.linalg.norm(diffs, dim=-1).min(dim=-1).values
-    distances.fill_diagonal_(0.0)
-    return 0.5 * (distances + distances.T)
+    distances = 0.5 * (distances + distances.T)
+    diagonal_mask = torch.eye(distances.shape[0], device=distances.device, dtype=torch.bool)
+    return distances.masked_fill(diagonal_mask, 0.0)
+
+
+def euclidean_distance_matrix(points: torch.Tensor | np.ndarray) -> torch.Tensor:
+    """Compute a symmetric Euclidean pairwise-distance matrix."""
+
+    pts = torch.as_tensor(points, dtype=torch.float32)
+    if pts.ndim != 2:
+        pts = pts.reshape(pts.shape[0], -1)
+    distances = torch.cdist(pts, pts)
+    distances = 0.5 * (distances + distances.T)
+    diagonal_mask = torch.eye(distances.shape[0], device=distances.device, dtype=torch.bool)
+    return distances.masked_fill(diagonal_mask, 0.0)
+
+
+def normalize_distance_matrix(
+    distance_matrix: torch.Tensor | np.ndarray,
+    *,
+    quantile: float = 0.9,
+) -> torch.Tensor:
+    """Remove arbitrary metric units using a robust pairwise-distance scale.
+
+    Persistence diagrams from image space and a two-dimensional latent space
+    otherwise live in incomparable units.  Dividing each metric by its own
+    upper-triangle distance quantile retains relative geometry and topology
+    while making cross-space bottleneck distances meaningful.  Zero distances
+    are excluded so duplicate observations do not collapse the scale.
+    """
+
+    if not 0 < quantile <= 1:
+        raise ValueError("quantile must lie in (0, 1]")
+
+    distances = torch.as_tensor(distance_matrix, dtype=torch.float32)
+    if distances.ndim != 2 or distances.shape[0] != distances.shape[1]:
+        raise ValueError("distance_matrix must be square")
+    if not torch.allclose(distances, distances.T, atol=1e-5, rtol=1e-5):
+        raise ValueError("distance_matrix must be symmetric")
+    if torch.any(distances < 0) or not torch.all(torch.isfinite(distances)):
+        raise ValueError("distance_matrix must contain finite non-negative values")
+
+    upper_triangle = distances[torch.triu_indices(distances.shape[0], distances.shape[1], offset=1).unbind()]
+    positive_distances = upper_triangle[upper_triangle > 0]
+    if positive_distances.numel() == 0:
+        raise ValueError("distance_matrix must contain at least one positive distance")
+    scale = torch.quantile(positive_distances, quantile)
+    normalized = distances / scale
+    diagonal_mask = torch.eye(normalized.shape[0], device=normalized.device, dtype=torch.bool)
+    return normalized.masked_fill(diagonal_mask, 0.0)
+
+
+def compute_normalized_persistence_diagrams(
+    distance_matrix: torch.Tensor | np.ndarray,
+    *,
+    maxdim: int = 2,
+    coeffs: Sequence[int] | None = None,
+    scale_quantile: float = 0.9,
+) -> dict[int, list[np.ndarray]]:
+    """Compute Vietoris--Rips persistence after robust metric normalization."""
+
+    normalized_distances = normalize_distance_matrix(distance_matrix, quantile=scale_quantile)
+    return compute_persistence_diagrams(
+        normalized_distances,
+        maxdim=maxdim,
+        coeffs=coeffs,
+        distance_matrix=True,
+    )
 
 
 def compute_persistence_diagrams(
-    data: Union[torch.Tensor, np.ndarray],
+    data: torch.Tensor | np.ndarray,
     maxdim: int = 2,
-    coeffs: Optional[Sequence[int]] = None,
+    coeffs: Sequence[int] | None = None,
     distance_matrix: bool = False,
-) -> Dict[int, List[np.ndarray]]:
+) -> dict[int, list[np.ndarray]]:
     coeff_list = list(coeffs) if coeffs is not None else [2, 3]
     if isinstance(data, torch.Tensor):
         data_array = data.detach().cpu().numpy()
@@ -161,19 +223,53 @@ def compute_persistence_diagrams(
 
 
 def compute_pairwise_bottlenecks(
-    original_diagrams: Dict[int, List[np.ndarray]], reconstructed_diagrams: Dict[int, List[float]]
-) -> Dict[int, np.ndarray]:
+    original_diagrams: dict[int, list[np.ndarray]],
+    reconstructed_diagrams: dict[int, list[np.ndarray]],
+) -> dict[int, np.ndarray]:
     bottlenecks = {}
-    for coeff in original_diagrams.keys():
+    for coeff in original_diagrams:
         bottlenecks[coeff] = np.array(
             [bottleneck(original_diagrams[coeff][i], reconstructed_diagrams[coeff][i]) for i in range(len(original_diagrams[coeff]))]
         )
     return bottlenecks
 
 
+def compute_topology_bottlenecks(
+    original_diagrams: dict[int, list[np.ndarray]],
+    latent_diagrams: dict[int, list[np.ndarray]],
+    *,
+    homology_dimensions: Sequence[int] = (1, 2),
+) -> tuple[dict[int, dict[int, float]], float]:
+    """Compare topology-bearing homology groups and return their mean score.
+
+    H0 is intentionally omitted by default: connected finite point clouds have
+    a large collection of sampling-dependent H0 bars, while the Klein-bottle
+    signature relevant to the manuscript is in H1 and H2 and changes with the
+    coefficient field.
+    """
+
+    if set(original_diagrams) != set(latent_diagrams):
+        raise ValueError("original and latent diagrams must use the same coefficient fields")
+
+    distances: dict[int, dict[int, float]] = {}
+    flattened: list[float] = []
+    for coeff in original_diagrams:
+        distances[coeff] = {}
+        for dimension in homology_dimensions:
+            if dimension >= len(original_diagrams[coeff]) or dimension >= len(latent_diagrams[coeff]):
+                raise ValueError(f"homology dimension {dimension} is missing for coefficient field {coeff}")
+            distance = float(bottleneck(original_diagrams[coeff][dimension], latent_diagrams[coeff][dimension]))
+            distances[coeff][dimension] = distance
+            flattened.append(distance)
+
+    if not flattened:
+        raise ValueError("homology_dimensions must not be empty")
+    return distances, float(np.mean(flattened))
+
+
 def plot_persistence_diagram(
-    diagram: List[np.ndarray], title: str = "Persistence Diagram", ax: Optional[Axes] = None
-) -> Union[Axes, Tuple[Figure, Axes]]:
+    diagram: list[np.ndarray], title: str = "Persistence Diagram", ax: Axes | None = None
+) -> Axes | tuple[Figure, Axes]:
     return_fig = False
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -190,7 +286,7 @@ def plot_persistence_diagram(
         return ax
 
 
-def plot_persistence_diagram_detailed(diagram: List[np.ndarray], title: str, ax: Axes, show_ylabels: bool = True):
+def plot_persistence_diagram_detailed(diagram: list[np.ndarray], title: str, ax: Axes, show_ylabels: bool = True):
     """
     Plots a detailed, black-and-white persistence diagram on a given Axes object.
 

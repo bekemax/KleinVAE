@@ -1,0 +1,60 @@
+# @package _global_
+
+# Klein-Circles experiment. Run all three models with:
+#   python main.py --multirun experiment=klein_circles \
+#     model=klein_vae,torus_vae,vanilla_vae
+
+defaults:
+  - override /data: circles
+  - override /model: klein_vae
+  - override /callbacks: default
+  - override /logger: csv
+  - override /trainer: cpu
+
+tags: ["paper", "klein-circles"]
+seed: 28
+hidden_dims: [1024, 512, 128, 32]
+kl_weight: 1.0
+train: True
+test: True
+
+data:
+  image_linear_pixel_size: 30
+  circle_radius: 0.3
+  num_images: 100_000
+  batch_size: 1024
+  persistence_subsample_size: 500
+  train_fraction: 0.8
+  val_fraction: 0.1
+  seed: ${seed}
+  split_seed: null
+  shuffle_train: true
+  generation_batch_size: 2048
+
+model:
+  lr: 0.001
+  optimizer:
+    lr: ${..lr}
+  scheduler:
+    factor: 0.99
+    patience: 0
+  model:
+    input_dim: 900
+    hidden_dims: ${hidden_dims}
+    latent_dim: 2
+    covariance_type: full
+  recon_loss:
+    reduction: sum
+
+trainer:
+  min_epochs: 50
+  max_epochs: 50
+  deterministic: True
+
+callbacks:
+  topology_metrics:
+    every_n_epochs: 50
+
+extras:
+  enforce_tags: False
+  print_config: True

@@ -147,7 +147,9 @@ dmypy.json
 
 # Lightning-Hydra-Template
 configs/local/default.yaml
-/data/
+/data/*
+!/data/appendix/
+!/data/appendix/*.csv
 /logs/
 .env
 
@@ -164,5 +166,7 @@ lightning_logs/
 *.npy
 *.npz
 *.png
+!results/appendix/*.png
+!results/klein_circles/*.png
 
 unsorted/

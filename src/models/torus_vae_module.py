@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from typing import Tuple
 
 import torch
 from torch.optim.lr_scheduler import LRScheduler
@@ -7,9 +6,12 @@ from torch.optim.lr_scheduler import LRScheduler
 from src.models.components.vae import SimpleVAE
 from src.models.vae_module import VAEModule
 from src.utils.topology_utils import project_to_torus
+from src.utils.topology_utils import torus_distance_matrix
 
 
 class TorusVAEModule(VAEModule):
+    """VAE whose Gaussian cover-space latent is projected onto a flat torus."""
+
     def __init__(
         self,
         model: SimpleVAE,
@@ -17,40 +19,38 @@ class TorusVAEModule(VAEModule):
         recon_loss: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
         scheduler: Callable[..., LRScheduler] | None = None,
         prior_mean: float = 0.5,
-        prior_std: float = 0.1,
+        prior_variance: float = 0.1,
         lr: float = 1e-3,
-        kl_weight: float = 1e-1,
+        kl_weight: float = 1.0,
+        scheduler_monitor: str = "val_loss",
     ) -> None:
+        if prior_variance <= 0:
+            raise ValueError("prior_variance must be positive")
+
         super().__init__(
             model=model,
             optimizer=optimizer,
             recon_loss=recon_loss,
             scheduler=scheduler,
+            prior_mean=prior_mean,
+            prior_variance=prior_variance,
             lr=lr,
             kl_weight=kl_weight,
+            scheduler_monitor=scheduler_monitor,
         )
         self.prior_mean = prior_mean
-        self.prior_std = prior_std
+        self.prior_variance = prior_variance
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mu, log_var = self.model.encode(x)
-        z_on_plane = self.model.reparameterize(mu, log_var)
-        z_on_torus = project_to_torus(z_on_plane, stack=True)
-        recon_x = self.model.decode(z_on_torus)  # type: ignore[arg-type]
-        return recon_x, mu, log_var
+    def project_latent(self, z: torch.Tensor) -> torch.Tensor:
+        return project_to_torus(z, stack=True)
 
-    def kl_loss(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
-        prior_var = self.prior_std**2
-        prior_log_var = torch.log(mu.new_tensor(prior_var))
-        prior_mean = mu.new_tensor(self.prior_mean)
-        kl_per_dim = prior_log_var - log_var + (log_var.exp() + (mu - prior_mean).pow(2)) / prior_var - 1
-        return 0.5 * torch.sum(kl_per_dim, dim=1).mean()
+    def latent_distance_matrix(self, means: torch.Tensor) -> torch.Tensor:
+        return torus_distance_matrix(means)
 
-
-if __name__ == "__main__":
-    model = SimpleVAE(input_dim=28 * 28, hidden_dims=[128, 64], latent_dim=2)
-    vae_module = TorusVAEModule(model=model, optimizer=torch.optim.Adam, recon_loss=torch.nn.BCELoss())
-
-    x = torch.randn(16, 28 * 28)
-    recon_x, mu, log_var = vae_module(x)
-    print(f"Reconstructed x shape: {recon_x.shape}, mu shape: {mu.shape}, log_var shape: {log_var.shape}")
+    def kl_loss(self, mu: torch.Tensor, covariance_parameters: torch.Tensor) -> torch.Tensor:
+        return self.gaussian_kl_to_isotropic_prior(
+            mu,
+            covariance_parameters,
+            prior_mean=self.prior_mean,
+            prior_variance=self.prior_variance,
+        )

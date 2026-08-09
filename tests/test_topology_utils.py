@@ -4,8 +4,12 @@ import torch
 
 from src.utils.topology_utils import (
     compute_pairwise_bottlenecks,
+    compute_normalized_persistence_diagrams,
     compute_persistence_diagrams,
+    compute_topology_bottlenecks,
+    euclidean_distance_matrix,
     klein_distance_matrix,
+    normalize_distance_matrix,
     preimage_of_klein,
     preimage_of_torus_grid,
     project_to_klein,
@@ -202,3 +206,38 @@ def test_compute_pairwise_bottlenecks_for_identical_and_perturbed_diagrams() -> 
     assert np.all(np.isfinite(perturbed_distances[2]))
     assert np.all(perturbed_distances[2] >= 0)
 
+
+def test_normalize_distance_matrix_removes_global_scale() -> None:
+    points = torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 2.0], [2.0, 2.0]])
+    distances = euclidean_distance_matrix(points)
+
+    normalized = normalize_distance_matrix(distances, quantile=0.75)
+    rescaled = normalize_distance_matrix(17.0 * distances, quantile=0.75)
+
+    torch.testing.assert_close(normalized, rescaled)
+    torch.testing.assert_close(normalized, normalized.T)
+    torch.testing.assert_close(torch.diag(normalized), torch.zeros(points.shape[0]))
+
+
+def test_normalize_distance_matrix_rejects_degenerate_metric() -> None:
+    with pytest.raises(ValueError, match="positive distance"):
+        normalize_distance_matrix(torch.zeros(3, 3))
+
+
+def test_normalized_persistence_and_topology_score_are_scale_invariant() -> None:
+    points = torch.tensor(
+        [[np.cos(angle), np.sin(angle)] for angle in np.linspace(0, 2 * np.pi, 16, endpoint=False)],
+        dtype=torch.float32,
+    )
+    distances = euclidean_distance_matrix(points)
+    original = compute_normalized_persistence_diagrams(distances, maxdim=1, coeffs=[2])
+    rescaled = compute_normalized_persistence_diagrams(5.0 * distances, maxdim=1, coeffs=[2])
+
+    bottlenecks, score = compute_topology_bottlenecks(
+        original,
+        rescaled,
+        homology_dimensions=(1,),
+    )
+
+    assert bottlenecks[2][1] == pytest.approx(0.0, abs=1e-7)
+    assert score == pytest.approx(0.0, abs=1e-7)

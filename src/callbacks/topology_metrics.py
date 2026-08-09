@@ -1,5 +1,5 @@
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -10,8 +10,11 @@ from matplotlib import pyplot as plt
 from src.models.klein_vae_module import KleinVAEModule
 from src.models.torus_vae_module import TorusVAEModule
 from src.utils.topology_utils import (
+    compute_normalized_persistence_diagrams,
     compute_pairwise_bottlenecks,
     compute_persistence_diagrams,
+    compute_topology_bottlenecks,
+    euclidean_distance_matrix,
     klein_distance_matrix,
     plot_persistence_diagram,
     project_to_klein,
@@ -29,18 +32,29 @@ class TopologyMetricsCallback(Callback):
         save_artifacts: bool = True,
         log_reconstruction_pd: bool = True,
         log_latent_pd: bool = True,
+        scale_quantile: float = 0.9,
+        topology_dimensions: Sequence[int] = (1, 2),
+        input_metric: str = "ambient",
     ) -> None:
+        if input_metric not in {"ambient", "intrinsic_klein"}:
+            raise ValueError("input_metric must be 'ambient' or 'intrinsic_klein'")
         self.every_n_epochs = every_n_epochs
         self.field_orders = tuple(field_orders)
         self.save_figures = save_figures
         self.save_artifacts = save_artifacts
         self.log_reconstruction_pd = log_reconstruction_pd
         self.log_latent_pd = log_latent_pd
-        self.original_pds: Optional[dict[int, list[np.ndarray]]] = None
-        self.final_reconstructed_pds: Optional[dict[int, list[np.ndarray]]] = None
-        self.final_latent_pds: Optional[dict[int, list[np.ndarray]]] = None
-        self.final_bottlenecks: Optional[dict[int, np.ndarray]] = None
-        self.final_total_dist: Optional[dict[int, float]] = None
+        self.scale_quantile = scale_quantile
+        self.topology_dimensions = tuple(topology_dimensions)
+        self.input_metric = input_metric
+        self.original_pds: dict[int, list[np.ndarray]] | None = None
+        self.normalized_original_pds: dict[int, list[np.ndarray]] | None = None
+        self.final_reconstructed_pds: dict[int, list[np.ndarray]] | None = None
+        self.final_latent_pds: dict[int, list[np.ndarray]] | None = None
+        self.final_bottlenecks: dict[int, np.ndarray] | None = None
+        self.final_total_dist: dict[int, float] | None = None
+        self.final_latent_bottlenecks: dict[int, dict[int, float]] | None = None
+        self.final_latent_topology_score: float | None = None
 
     def _has_eval_data(self, trainer: Trainer) -> bool:
         datamodule = trainer.datamodule  # type: ignore[union-attr]
@@ -49,7 +63,7 @@ class TopologyMetricsCallback(Callback):
     def _eval_input(self, trainer: Trainer, pl_module: LightningModule) -> torch.Tensor:
         return trainer.datamodule.data_for_pd.to(pl_module.device)  # type: ignore[union-attr]
 
-    def _wandb_logger(self, trainer: Trainer) -> Optional[WandbLogger]:
+    def _wandb_logger(self, trainer: Trainer) -> WandbLogger | None:
         for logger in trainer.loggers:
             if isinstance(logger, WandbLogger):
                 return logger
@@ -57,14 +71,40 @@ class TopologyMetricsCallback(Callback):
 
     def _generate_reconstructions(self, trainer: Trainer, pl_module: LightningModule) -> torch.Tensor:
         with torch.no_grad():
-            recon_x, *_ = pl_module(self._eval_input(trainer, pl_module))
+            eval_input = self._eval_input(trainer, pl_module)
+            if hasattr(pl_module, "reconstruct"):
+                recon_x = pl_module.reconstruct(  # type: ignore[attr-defined]
+                    eval_input,
+                    sample=False,
+                )
+            else:
+                recon_x, *_ = pl_module(eval_input)
         return recon_x.detach().cpu()
+
+    def _empirical_latent_variances(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+    ) -> torch.Tensor:
+        """Return empirical variance of one projected latent sample per input."""
+
+        with torch.no_grad():
+            x = self._eval_input(trainer, pl_module)
+            mu, covariance_parameters = pl_module.model.encode(x)  # type: ignore[attr-defined]
+            z = pl_module.model.reparameterize(mu, covariance_parameters)  # type: ignore[attr-defined]
+            projected = (
+                pl_module.project_latent(z)  # type: ignore[attr-defined]
+                if hasattr(pl_module, "project_latent")
+                else z
+            )
+            variance = projected.var(dim=0, unbiased=True).sum()
+        return variance
 
     def _generate_latent_diagrams(
         self,
         trainer: Trainer,
         pl_module: LightningModule,
-    ) -> Optional[dict[int, list[np.ndarray]]]:
+    ) -> dict[int, list[np.ndarray]] | None:
         if not self.log_latent_pd:
             return None
 
@@ -75,20 +115,41 @@ class TopologyMetricsCallback(Callback):
             if isinstance(pl_module, KleinVAEModule):
                 latent_points = project_to_klein(mu)
                 distance_matrix = klein_distance_matrix(latent_points)
-                return compute_persistence_diagrams(distance_matrix, coeffs=self.field_orders, distance_matrix=True)
-
-            if isinstance(pl_module, TorusVAEModule):
+            elif isinstance(pl_module, TorusVAEModule):
                 latent_points = project_to_torus(mu, stack=True)
                 distance_matrix = torus_distance_matrix(latent_points)
-                return compute_persistence_diagrams(distance_matrix, coeffs=self.field_orders, distance_matrix=True)
+            else:
+                distance_matrix = euclidean_distance_matrix(mu)
 
-            return compute_persistence_diagrams(mu, coeffs=self.field_orders)
+            return compute_normalized_persistence_diagrams(
+                distance_matrix,
+                coeffs=self.field_orders,
+                scale_quantile=self.scale_quantile,
+            )
 
     def _get_original_diagrams(self, trainer: Trainer) -> dict[int, list[np.ndarray]]:
         if self.original_pds is None:
             data_for_pd = trainer.datamodule.data_for_pd.detach().cpu()  # type: ignore[union-attr]
             self.original_pds = compute_persistence_diagrams(data_for_pd, coeffs=list(self.field_orders))
         return self.original_pds
+
+    def _get_normalized_original_diagrams(self, trainer: Trainer) -> dict[int, list[np.ndarray]]:
+        if self.normalized_original_pds is None:
+            datamodule = trainer.datamodule
+            if self.input_metric == "intrinsic_klein":
+                intrinsic_points = getattr(datamodule, "validation_parameters_for_pd", None)
+                if intrinsic_points is None:
+                    raise ValueError("input_metric='intrinsic_klein' requires validation_parameters_for_pd")
+                distance_matrix = klein_distance_matrix(intrinsic_points.detach().cpu())
+            else:
+                data_for_pd = datamodule.data_for_pd.detach().cpu()  # type: ignore[union-attr]
+                distance_matrix = euclidean_distance_matrix(data_for_pd)
+            self.normalized_original_pds = compute_normalized_persistence_diagrams(
+                distance_matrix,
+                coeffs=self.field_orders,
+                scale_quantile=self.scale_quantile,
+            )
+        return self.normalized_original_pds
 
     def _generate_log_data(self, trainer: Trainer, pl_module: LightningModule) -> dict:
         original_diagrams = self._get_original_diagrams(trainer)
@@ -161,6 +222,15 @@ class TopologyMetricsCallback(Callback):
         if trainer.sanity_checking or not self._has_eval_data(trainer):
             return
 
+        empirical_variance = self._empirical_latent_variances(trainer, pl_module)
+        tiny = torch.finfo(empirical_variance.dtype).tiny
+        pl_module.log("latent_code_variance", empirical_variance, prog_bar=False)
+        pl_module.log(
+            "log_latent_code_variance",
+            empirical_variance.clamp_min(tiny).log(),
+            prog_bar=False,
+        )
+
         is_last_epoch = trainer.current_epoch == trainer.max_epochs - 1
         should_compute = ((trainer.current_epoch + 1) % self.every_n_epochs == 0) or is_last_epoch
         if not should_compute:
@@ -197,6 +267,24 @@ class TopologyMetricsCallback(Callback):
 
         latent_diagrams = self._generate_latent_diagrams(trainer, pl_module)
         if latent_diagrams is not None:
+            latent_bottlenecks, latent_topology_score = compute_topology_bottlenecks(
+                self._get_normalized_original_diagrams(trainer),
+                latent_diagrams,
+                homology_dimensions=self.topology_dimensions,
+            )
+            for coeff, distances in latent_bottlenecks.items():
+                for dimension, distance in distances.items():
+                    pl_module.log(
+                        f"latent_bottleneck_over_{coeff}_dim_{dimension}",
+                        distance,
+                        prog_bar=False,
+                    )
+            pl_module.log("latent_topology_score", latent_topology_score, prog_bar=True)
+            pl_module.log(
+                "latent_topology_input_metric_is_intrinsic",
+                float(self.input_metric == "intrinsic_klein"),
+                prog_bar=False,
+            )
             self._save_pd_figures(
                 trainer,
                 latent_diagrams,
@@ -204,9 +292,11 @@ class TopologyMetricsCallback(Callback):
                 title_prefix="Latent PD",
                 filename_prefix="latent_pd",
             )
-            pl_module.print("--- Logged latent persistence diagrams ---\n")
+            pl_module.print(f"--- Logged normalized latent persistence diagrams. H1/H2 mean bottleneck = {latent_topology_score:.4f} ---\n")
             if is_last_epoch:
                 self.final_latent_pds = latent_diagrams
+                self.final_latent_bottlenecks = latent_bottlenecks
+                self.final_latent_topology_score = latent_topology_score
 
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         if trainer.global_rank != 0 or not self.save_artifacts or not self._has_eval_data(trainer):
@@ -228,15 +318,23 @@ class TopologyMetricsCallback(Callback):
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
         original_pds = self._get_original_diagrams(trainer)
+        normalized_original_pds = self._get_normalized_original_diagrams(trainer)
         if self.final_reconstructed_pds is not None:
             self._save_final_pd_comparison_figure(artifact_dir, original_pds, self.final_reconstructed_pds)
 
         for coeff in self.field_orders:
             np.savez_compressed(artifact_dir / f"original_pd_z{coeff}.npz", *original_pds[coeff])
+            np.savez_compressed(
+                artifact_dir / f"normalized_original_pd_z{coeff}.npz",
+                *normalized_original_pds[coeff],
+            )
             if self.final_reconstructed_pds is not None:
                 np.savez_compressed(artifact_dir / f"reconstructed_pd_z{coeff}.npz", *self.final_reconstructed_pds[coeff])
             if self.final_latent_pds is not None:
-                np.savez_compressed(artifact_dir / f"latent_pd_z{coeff}.npz", *self.final_latent_pds[coeff])
+                np.savez_compressed(
+                    artifact_dir / f"normalized_latent_pd_z{coeff}.npz",
+                    *self.final_latent_pds[coeff],
+                )
 
         wandb_logger = self._wandb_logger(trainer)
         if wandb_logger is not None:
