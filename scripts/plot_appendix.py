@@ -162,9 +162,9 @@ def generate_figures(output_dir: Path) -> dict[str, Path]:
     frames = {name: pd.read_csv(path) for name, path in source_paths.items()}
 
     figure5, axes = plt.subplots(1, 2, figsize=(13, 5.5))
-    _plot_series(axes[0], frames["elbo"], "val_loss", logarithmic=True)
+    _plot_series(axes[0], frames["elbo"], "val_loss")
     axes[0].set_title("Evidence Lower Bound (ELBO)")
-    axes[0].set_ylabel(r"$\log_{10}$(ELBO)")
+    axes[0].set_ylabel("ELBO")
     _plot_series(axes[1], frames["var_z"], "var_z", logarithmic=True)
     axes[1].set_title("Variance of Latent Codes")
     axes[1].set_ylabel(r"$\log_{10}(\mathrm{Var}(z))$")

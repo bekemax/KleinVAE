@@ -20,22 +20,23 @@ Klein-Circles experiment:
 - result tables and figures;
 - Appendix Figures 5 and 6.
 
-The three models are trained once with seed 28. Evaluation uses one fixed test
-dataset generated with seed 29. No seed sweep is run.
+The three models are trained and evaluated with seed 28. No seed sweep is run.
 
 ## Results
 
 | Model | Reconstruction NLL | Negative ELBO / bound | H1/H2 bottleneck | Log empirical latent variance |
 |---|---:|---:|---:|---:|
-| KleinVAE | 55.47 | 67.30 | 0.1463 | -1.9358 |
-| TorusVAE | 149.39 | 162.70 | 0.1500 | -0.7006 |
-| Euclidean VAE | 21.16 | 32.74 | 0.1865 | 1.5191 |
+| KleinVAE | 62.22 | 76.68 | 0.1261 | -1.8478 |
+| TorusVAE | 121.03 | 132.61 | 0.1455 | -1.1975 |
+| Euclidean VAE | 20.46 | 31.98 | 0.1876 | 1.4314 |
 
 ![KleinVAE experiment results](results/klein_circles/comparison.png)
 
-KleinVAE gives a 21.6% lower intrinsic H1/H2 bottleneck score than the
+KleinVAE gives a 32.8% lower intrinsic H1/H2 bottleneck score than the
 Euclidean VAE in this run. The Euclidean VAE gives the lower reconstruction
 NLL.
+
+![Training curves](results/klein_circles/training_curves.png)
 
 ## Installation
 

@@ -1,6 +1,6 @@
 {
   "training_seed": 28,
-  "evaluation_seed": 29,
+  "evaluation_seed": 28,
   "checkpoint_selection": "lowest validation loss",
   "models": ["klein", "torus", "euclidean"],
   "training_config": "configs/experiment/klein_circles.yaml",
