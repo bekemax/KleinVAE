@@ -141,7 +141,7 @@ def test_mean_reconstruction_loss_is_rescaled_for_negative_elbo_logging() -> Non
     module = VAEModule(
         model=_base_model(),
         optimizer=torch.optim.Adam,
-        recon_loss=torch.nn.BCELoss(reduction="mean"),
+        recon_loss=torch.nn.BCEWithLogitsLoss(reduction="mean"),
     )
     x = torch.rand(4, 6)
     reconstruction = torch.rand(4, 6)

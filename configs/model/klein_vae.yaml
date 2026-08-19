@@ -31,5 +31,5 @@ model:
   covariance_type: full
 
 recon_loss:
-  _target_: torch.nn.BCELoss
+  _target_: torch.nn.BCEWithLogitsLoss
   reduction: sum

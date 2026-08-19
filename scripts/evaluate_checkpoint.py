@@ -8,6 +8,7 @@ homology, avoiding a meaningless comparison between pixel and latent units.
 
 import argparse
 import inspect
+import math
 import json
 from functools import partial
 from pathlib import Path
@@ -27,6 +28,8 @@ from src.models.torus_vae_module import TorusVAEModule
 from src.models.vae_module import VAEModule
 from src.utils.topology_utils import (
     compute_normalized_persistence_diagrams,
+    compute_pairwise_bottlenecks,
+    compute_persistence_diagrams,
     compute_topology_bottlenecks,
     euclidean_distance_matrix,
     klein_distance_matrix,
@@ -36,7 +39,9 @@ from src.utils.topology_utils import (
 )
 
 
-def _architecture_from_state_dict(state_dict: dict[str, torch.Tensor], covariance_type: str | None) -> tuple[int, list[int], int, str]:
+def _architecture_from_state_dict(
+    state_dict: dict[str, torch.Tensor], covariance_type: str | None
+) -> tuple[int, list[int], int, str]:
     encoder_weights = sorted(
         (
             (int(key.split(".")[2]), value)
@@ -51,22 +56,44 @@ def _architecture_from_state_dict(state_dict: dict[str, torch.Tensor], covarianc
     input_dim = int(encoder_weights[0][1].shape[1])
     hidden_dims = [int(weight.shape[0]) for _, weight in encoder_weights[:-1]]
     output_dim = int(encoder_weights[-1][1].shape[0])
-    latent_dim = 2
-    covariance_parameter_dim = output_dim - latent_dim
-    if covariance_type is None:
-        if covariance_parameter_dim == latent_dim * (latent_dim + 1) // 2:
-            covariance_type = "full"
-        elif covariance_parameter_dim == latent_dim:
-            covariance_type = "diagonal"
-        elif covariance_parameter_dim == 1:
-            raise ValueError("Scalar covariance is ambiguous; pass --covariance-type isotropic")
+
+    def infer_latent(kind: str) -> int | None:
+        if kind == "isotropic":
+            candidate = output_dim - 1
+        elif kind == "diagonal":
+            candidate = output_dim // 2 if output_dim % 2 == 0 else 0
         else:
+            candidate = int((math.sqrt(9 + 8 * output_dim) - 3) / 2)
+            if candidate * (candidate + 3) // 2 != output_dim:
+                candidate = 0
+        return candidate if candidate > 0 else None
+
+    if covariance_type is not None:
+        latent_dim = infer_latent(covariance_type)
+        if latent_dim is None:
+            raise ValueError(
+                f"Encoder output width {output_dim} is incompatible with {covariance_type} covariance"
+            )
+    else:
+        # Repository checkpoints use full covariance. Prefer it when the head
+        # width is valid; otherwise accept an unambiguous alternative.
+        candidates = [
+            (kind, latent)
+            for kind in ("full", "diagonal", "isotropic")
+            if (latent := infer_latent(kind)) is not None
+        ]
+        if not candidates:
             raise ValueError("Cannot infer covariance type from checkpoint")
+        covariance_type, latent_dim = candidates[0]
     return input_dim, hidden_dims, latent_dim, covariance_type
 
 
-def _load_model(checkpoint: dict[str, Any], model_kind: str, covariance_type: str | None) -> VAEModule:
-    input_dim, hidden_dims, latent_dim, inferred_covariance = _architecture_from_state_dict(checkpoint["state_dict"], covariance_type)
+def _load_model(
+    checkpoint: dict[str, Any], model_kind: str, covariance_type: str | None
+) -> VAEModule:
+    input_dim, hidden_dims, latent_dim, inferred_covariance = (
+        _architecture_from_state_dict(checkpoint["state_dict"], covariance_type)
+    )
     network = SimpleVAE(
         input_dim=input_dim,
         hidden_dims=hidden_dims,
@@ -78,7 +105,7 @@ def _load_model(checkpoint: dict[str, Any], model_kind: str, covariance_type: st
         "model": network,
         "optimizer": partial(torch.optim.Adam, lr=float(hparams.get("lr", 1e-3))),
         "scheduler": None,
-        "recon_loss": nn.BCELoss(reduction="sum"),
+        "recon_loss": nn.BCEWithLogitsLoss(reduction="sum"),
         "prior_mean": float(hparams.get("prior_mean", 0.0)),
         "prior_variance": float(hparams.get("prior_variance", 1.0)),
         "lr": float(hparams.get("lr", 1e-3)),
@@ -140,7 +167,12 @@ def evaluate(
         dataset = datamodule.test_dataset
         topology_input = datamodule.test_data_for_pd
         topology_parameters = getattr(datamodule, "test_parameters_for_pd", None)
-    if dataset is None or topology_input is None or len(dataset) == 0 or len(topology_input) == 0:
+    if (
+        dataset is None
+        or topology_input is None
+        or len(dataset) == 0
+        or len(topology_input) == 0
+    ):
         raise ValueError(f"The requested {split} split is empty")
 
     totals = {
@@ -156,12 +188,23 @@ def evaluate(
             means, covariance_parameters = module.model.encode(x)
             mean_reconstruction = module.model.decode(module.project_latent(means))
             sampled_codes = module.model.reparameterize(means, covariance_parameters)
-            sampled_reconstruction = module.model.decode(module.project_latent(sampled_codes))
+            sampled_reconstruction = module.model.decode(
+                module.project_latent(sampled_codes)
+            )
             batch_size = x.shape[0]
-            totals["recon_nll"] += float(module.reconstruction_nll(x, mean_reconstruction)) * batch_size
-            totals["elbo_recon_nll"] += float(module.reconstruction_nll(x, sampled_reconstruction)) * batch_size
-            totals["kl"] += float(module.kl_loss(means, covariance_parameters)) * batch_size
-            totals["posterior_log_variance"] += float(module.model.posterior_log_variance(covariance_parameters).mean()) * batch_size
+            totals["recon_nll"] += (
+                float(module.reconstruction_nll(x, mean_reconstruction)) * batch_size
+            )
+            totals["elbo_recon_nll"] += (
+                float(module.reconstruction_nll(x, sampled_reconstruction)) * batch_size
+            )
+            totals["kl"] += (
+                float(module.kl_loss(means, covariance_parameters)) * batch_size
+            )
+            totals["posterior_log_variance"] += (
+                float(module.model.posterior_log_variance(covariance_parameters).mean())
+                * batch_size
+            )
             observation_count += batch_size
 
         means, covariance_parameters = module.model.encode(topology_input)
@@ -171,7 +214,9 @@ def evaluate(
 
     if intrinsic_input_metric:
         if topology_parameters is None:
-            raise ValueError("The datamodule does not expose intrinsic Klein parameters")
+            raise ValueError(
+                "The datamodule does not expose intrinsic Klein parameters"
+            )
         input_distance_matrix = klein_distance_matrix(topology_parameters)
     else:
         input_distance_matrix = euclidean_distance_matrix(topology_input)
@@ -191,6 +236,27 @@ def evaluate(
         homology_dimensions=(1, 2),
     )
 
+    # total_bottleneck_over_k, reported alongside latent_topology_score because
+    # the two answer different questions and disagree in practice. The latent
+    # score compares the input against each model's *latent* under that model's
+    # own metric, so it is confounded by the metric assignment; this compares
+    # the input's persistence diagram against the *reconstruction's*, in ambient
+    # pixel space and identically for every model.
+    #
+    # Computed exactly as src/callbacks/topology_metrics.py does it: raw
+    # unnormalized point clouds, per-homology-dimension bottleneck distances,
+    # combined with an L2 norm rather than a sum.
+    with torch.inference_mode():
+        reconstruction = module.reconstruct(topology_input, sample=False)
+    ambient_bottlenecks = compute_pairwise_bottlenecks(
+        compute_persistence_diagrams(topology_input, coeffs=[2, 3]),
+        compute_persistence_diagrams(reconstruction, coeffs=[2, 3]),
+    )
+    total_bottlenecks = {
+        coeff: float(np.linalg.norm(distances))
+        for coeff, distances in ambient_bottlenecks.items()
+    }
+
     recon_nll = totals["recon_nll"] / observation_count
     elbo_recon_nll = totals["elbo_recon_nll"] / observation_count
     kl = totals["kl"] / observation_count
@@ -201,7 +267,9 @@ def evaluate(
         "observations": observation_count,
         "topology_sample_size": len(topology_input),
         "scale_quantile": scale_quantile,
-        "input_metric": "intrinsic_klein" if intrinsic_input_metric else "ambient_euclidean",
+        "input_metric": "intrinsic_klein"
+        if intrinsic_input_metric
+        else "ambient_euclidean",
         "reconstruction_mode": "posterior_mean",
         "recon_nll": recon_nll,
         "elbo_recon_nll": elbo_recon_nll,
@@ -209,9 +277,16 @@ def evaluate(
         "negative_elbo": elbo_recon_nll + kl,
         "posterior_log_variance": posterior_log_variance,
         "empirical_latent_code_variance": empirical_latent_code_variance_value,
-        "log_empirical_latent_code_variance": float(np.log(max(empirical_latent_code_variance_value, np.finfo(float).tiny))),
+        "log_empirical_latent_code_variance": float(
+            np.log(max(empirical_latent_code_variance_value, np.finfo(float).tiny))
+        ),
         "latent_topology_score": topology_score,
+        "total_bottleneck_over_2": total_bottlenecks[2],
+        "total_bottleneck_over_3": total_bottlenecks[3],
     }
+    for coeff, distances in ambient_bottlenecks.items():
+        for dimension, distance in enumerate(distances):
+            result[f"bottleneck_over_{coeff}_dim_{dimension}"] = float(distance)
     for coeff, dimensions in latent_bottlenecks.items():
         for dimension, distance in dimensions.items():
             result[f"latent_bottleneck_z{coeff}_h{dimension}"] = distance
@@ -221,13 +296,15 @@ def evaluate(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", type=Path)
-    parser.add_argument("--model-kind", choices=("klein", "torus", "euclidean"), required=True)
+    parser.add_argument(
+        "--model-kind", choices=("klein", "torus", "euclidean"), required=True
+    )
     parser.add_argument(
         "--covariance-type",
         choices=("isotropic", "diagonal", "full"),
     )
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
-    parser.add_argument("--persistence-sample-size", type=int, default=500)
+    parser.add_argument("--persistence-sample-size", type=int, default=1000)
     parser.add_argument(
         "--data-seed",
         type=int,
