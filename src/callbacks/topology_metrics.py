@@ -78,7 +78,9 @@ class TopologyMetricsCallback(Callback):
                     sample=False,
                 )
             else:
-                recon_x, *_ = pl_module(eval_input)
+                # `forward` returns logits; PDs are computed on pixel intensities, so map them back to [0, 1].
+                logits, *_ = pl_module(eval_input)
+                recon_x = torch.sigmoid(logits)
         return recon_x.detach().cpu()
 
     def _empirical_latent_variances(

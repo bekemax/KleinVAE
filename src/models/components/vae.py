@@ -6,6 +6,9 @@ from torch import nn
 
 CovarianceType = Literal["isotropic", "diagonal", "full"]
 
+# Bound for encoder outputs that are expontiated to remove overflow.
+LOG_SCALE_BOUND = 10.0
+
 
 class SimpleVAE(nn.Module):
     """Fully connected VAE used by the Euclidean, torus, and Klein models."""
@@ -50,7 +53,7 @@ class SimpleVAE(nn.Module):
         for hidden_dim in reversed(self.hidden_dims):
             decoder_layers.extend((nn.Linear(previous_dim, hidden_dim), nn.LeakyReLU()))
             previous_dim = hidden_dim
-        decoder_layers.extend((nn.Linear(previous_dim, input_dim), nn.Sigmoid()))
+        decoder_layers.append(nn.Linear(previous_dim, input_dim))
         self.decoder = nn.Sequential(*decoder_layers)
 
         tril_rows, tril_cols = torch.tril_indices(latent_dim, latent_dim)
@@ -74,16 +77,17 @@ class SimpleVAE(nn.Module):
             )
 
         if self.covariance_type == "isotropic":
-            log_variance = covariance_parameters[..., :1]
+            log_variance = covariance_parameters[..., :1].clamp(-2 * LOG_SCALE_BOUND, 2 * LOG_SCALE_BOUND)
             scale = torch.exp(0.5 * log_variance).expand(*log_variance.shape[:-1], self.latent_dim)
             return torch.diag_embed(scale)
 
         if self.covariance_type == "diagonal":
-            return torch.diag_embed(torch.exp(0.5 * covariance_parameters))
+            log_variance = covariance_parameters.clamp(-2 * LOG_SCALE_BOUND, 2 * LOG_SCALE_BOUND)
+            return torch.diag_embed(torch.exp(0.5 * log_variance))
 
         values = covariance_parameters.clone()
         diagonal_mask = self._tril_rows == self._tril_cols
-        values[..., diagonal_mask] = torch.exp(values[..., diagonal_mask])
+        values[..., diagonal_mask] = torch.exp(values[..., diagonal_mask].clamp(-LOG_SCALE_BOUND, LOG_SCALE_BOUND))
         scale_tril = covariance_parameters.new_zeros(*covariance_parameters.shape[:-1], self.latent_dim, self.latent_dim)
         scale_tril[..., self._tril_rows, self._tril_cols] = values
         return scale_tril
@@ -101,7 +105,13 @@ class SimpleVAE(nn.Module):
         return mu + torch.matmul(scale_tril, noise.unsqueeze(-1)).squeeze(-1)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
+
         return self.decoder(z)
+
+    def decode_probabilities(self, z: torch.Tensor) -> torch.Tensor:
+        """Return per-pixel Bernoulli means in ``[0, 1]`` for visualization."""
+
+        return torch.sigmoid(self.decode(z))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, covariance_parameters = self.encode(x)

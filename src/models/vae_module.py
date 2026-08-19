@@ -51,21 +51,18 @@ class VAEModule(pl.LightningModule):
 
         return euclidean_distance_matrix(means)
 
-    def reconstruct(self, x: torch.Tensor, *, sample: bool = False) -> torch.Tensor:
-        """Reconstruct inputs, deterministically from the posterior mean by default."""
+    def reconstruct(self, x: torch.Tensor, *, sample: bool = False, as_logits: bool = False) -> torch.Tensor:
+        """Reconstruct inputs from the posterior mean."""
 
         mu, covariance_parameters = self.model.encode(x)
         z = self.model.reparameterize(mu, covariance_parameters) if sample else mu
-        return self.model.decode(self.project_latent(z))
+        projected = self.project_latent(z)
+        if as_logits:
+            return self.model.decode(projected)
+        return self.model.decode_probabilities(projected)
 
     def reconstruction_loss(self, x: torch.Tensor, reconstruction: torch.Tensor) -> torch.Tensor:
-        """Return the configured reconstruction term used for optimization.
-
-        With ``BCELoss(reduction="sum")`` this is the factorized Bernoulli
-        negative log-likelihood summed over pixels and averaged over the batch.
-        With ``reduction="mean"`` it reproduces the original notebook's
-        pixel-mean objective.
-        """
+        """Return the configured reconstruction term used for optimization."""
 
         target = x if x.shape == reconstruction.shape else x.reshape(x.shape[0], -1)
         loss = self.recon_loss(reconstruction, target)
