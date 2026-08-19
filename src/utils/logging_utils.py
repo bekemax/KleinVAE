@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from lightning_utilities.core.rank_zero import rank_zero_only
 from omegaconf import OmegaConf
+from omegaconf.errors import InterpolationResolutionError
 
 from src.utils import pylogger
 
@@ -22,7 +23,10 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     """
     hparams = {}
 
-    cfg = OmegaConf.to_container(object_dict["cfg"])
+    try:
+        cfg = OmegaConf.to_container(object_dict["cfg"], resolve=True)
+    except InterpolationResolutionError:
+        cfg = OmegaConf.to_container(object_dict["cfg"])
     model = object_dict["model"]
     trainer = object_dict["trainer"]
 
@@ -34,18 +38,17 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
 
     # save number of model parameters
     hparams["model/params/total"] = sum(p.numel() for p in model.parameters())
-    hparams["model/params/trainable"] = sum(
-        p.numel() for p in model.parameters() if p.requires_grad
-    )
-    hparams["model/params/non_trainable"] = sum(
-        p.numel() for p in model.parameters() if not p.requires_grad
-    )
+    hparams["model/params/trainable"] = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    hparams["model/params/non_trainable"] = sum(p.numel() for p in model.parameters() if not p.requires_grad)
 
     hparams["data"] = cfg["data"]
     hparams["trainer"] = cfg["trainer"]
 
     hparams["callbacks"] = cfg.get("callbacks")
     hparams["extras"] = cfg.get("extras")
+
+    hparams["arch"] = cfg.get("arch")
+    hparams["hidden_dims"] = cfg.get("hidden_dims")
 
     hparams["task_name"] = cfg.get("task_name")
     hparams["tags"] = cfg.get("tags")

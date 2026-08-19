@@ -154,7 +154,7 @@ class VAEModule(pl.LightningModule):
             on_epoch=True,
             prog_bar=stage != "test",
             batch_size=x.shape[0],
-            sync_dist=True,
+            sync_dist=self._trainer is not None and self.trainer.world_size > 1,
         )
         return objective
 

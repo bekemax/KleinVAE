@@ -133,6 +133,28 @@ MODULE_TARGET_TO_MODEL_KIND = {
 }
 
 
+def unsynced_wandb_runs(sweep_directory: Path) -> list[Path]:
+    """Offline wandb runs under the sweep, minus the ones already uploaded."""
+    runs = sorted(sweep_directory.glob("**/wandb/offline-run-*"))
+    return [run for run in runs if run.is_dir() and not Path(f"{run}.synced").exists()]
+
+
+def sync_wandb(sweep_directory: Path) -> int:
+    """Upload offline runs. A sync failure must not cost the evaluation that follows."""
+    runs = unsynced_wandb_runs(sweep_directory)
+    if not runs:
+        return 0
+    print(f"syncing {len(runs)} offline wandb runs")
+    result = subprocess.run(
+        [sys.executable, "-m", "wandb", "sync", *(str(run) for run in runs)],
+        cwd=ROOT,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"wandb sync exited with {result.returncode}; sync manually before deleting logs")
+    return len(runs)
+
+
 def sweep_run_directories(sweep_directory: Path) -> list[Path]:
     """Every Hydra run under a sweep directory, identified by its saved config."""
 
@@ -326,6 +348,12 @@ def parse_args() -> argparse.Namespace:
         help="Skip training when a numbered checkpoint already exists (default: true).",
     )
     parser.add_argument(
+        "--sync-wandb",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Upload offline wandb runs after the sweep (default: true).",
+    )
+    parser.add_argument(
         "--skip-evaluated",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -398,6 +426,9 @@ def main() -> None:
     if not args.collect_only:
         print(f"sweep {args.ablation} -> {sweep_directory}")
         subprocess.run(command, cwd=ROOT, check=True)
+
+    if args.sync_wandb:
+        sync_wandb(sweep_directory)
 
     if args.fast and not args.collect_only:
         return

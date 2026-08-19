@@ -15,14 +15,16 @@ defaults:
 hydra:
   mode: "MULTIRUN"
   launcher:
-    n_jobs: 4
+    n_jobs: 5
   sweeper:
     params:
       experiment: capacity_ablation
       model: klein_vae,torus_vae,vanilla_vae
-      arch: tiny #,small,official
+      arch: small #,tiny,official
       seed: 27,28,29
 
 logger:
   wandb:
     group: epochs300
+    # Logging over the network costs ~20% of each epoch; sync with `wandb sync` afterwards.
+    offline: True

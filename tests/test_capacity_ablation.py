@@ -16,6 +16,7 @@ from scripts.run_capacity_ablation import (
     run_dir,
     stale_evaluation_reason,
     train_command,
+    unsynced_wandb_runs,
     write_results,
 )
 from src.models.components.vae import SimpleVAE
@@ -211,3 +212,34 @@ def test_a_retrained_checkpoint_forces_recomputation(tmp_path: Path) -> None:
     )
 
     assert reason == "checkpoint is newer than the stored evaluation"
+
+
+def _offline_run(sweep_directory: Path, name: str) -> Path:
+    run = sweep_directory / name / "wandb" / f"offline-run-{name}"
+    run.mkdir(parents=True)
+    return run
+
+
+def test_unsynced_wandb_runs_finds_offline_runs(tmp_path: Path) -> None:
+    _offline_run(tmp_path, "a")
+    _offline_run(tmp_path, "b")
+    assert len(unsynced_wandb_runs(tmp_path)) == 2
+
+
+def test_unsynced_wandb_runs_skips_already_synced(tmp_path: Path) -> None:
+    run = _offline_run(tmp_path, "a")
+    _offline_run(tmp_path, "b")
+    Path(f"{run}.synced").touch()
+    assert [path.name for path in unsynced_wandb_runs(tmp_path)] == ["offline-run-b"]
+
+
+def test_unsynced_wandb_runs_ignores_online_runs(tmp_path: Path) -> None:
+    (tmp_path / "a" / "wandb" / "run-20260819_020119-irxb4c8i").mkdir(parents=True)
+    assert unsynced_wandb_runs(tmp_path) == []
+
+
+def test_sync_wandb_defaults_to_enabled(monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["run_capacity_ablation.py"])
+    assert parse_args().sync_wandb is True
+    monkeypatch.setattr("sys.argv", ["run_capacity_ablation.py", "--no-sync-wandb"])
+    assert parse_args().sync_wandb is False

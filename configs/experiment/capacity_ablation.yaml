@@ -27,3 +27,4 @@ test: False
 callbacks:
   topology_metrics:
     compute_during_training: False
+  rich_progress_bar: null
