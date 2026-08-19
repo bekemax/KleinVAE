@@ -1,0 +1,6 @@
+defaults:
+  - csv
+  - wandb
+
+wandb:
+  project: klein-vae

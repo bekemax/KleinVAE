@@ -93,6 +93,30 @@ records the following epoch-level quantities:
 | `latent_code_variance` | Sum of coordinate variances of projected posterior samples. |
 | `log_latent_code_variance` | Natural logarithm of empirical latent-code variance. |
 
+## Capacity ablation
+
+The capacity grid varies MLP width, seed, and Euclidean latent dimension:
+
+```bash
+uv run python scripts/run_capacity_ablation.py \
+  --seed 27 --seed 28 --seed 29 \
+  --latent-dim 2 --latent-dim 3 --latent-dim 4
+```
+
+| `arch` | Hidden dimensions | 2D / 3D / 4D parameters |
+|---|---|---:|
+| `tiny` | `[64]` | 116,681 / 117,005 / 117,394 |
+| `small` | `[256, 64]` | 495,561 / 495,885 / 496,274 |
+| `official` | `[1024, 512, 128, 32]` | 3,035,561 / 3,035,725 / 3,035,922 |
+
+All models use a 2D latent. Euclidean VAE additionally uses 3D and 4D latents,
+giving 45 runs across seeds 27, 28, and 29. Full-covariance encoder heads have
+width 5, 9, and 14 for latent dimensions 2, 3, and 4 respectively.
+
+Checkpoints land in `logs/capacity_ablation/seed{seed}/{arch}/{model}/`; 3D and
+4D Euclidean runs add `latent_dim_{n}/`. Evaluation writes the consolidated
+`results/capacity_ablation/results.csv`.
+
 ## Appendix figures
 
 The notebook also generates Figures 5 and 6 from the exported curves in
@@ -106,12 +130,14 @@ uv run python scripts/plot_appendix.py
 
 ```text
 configs/experiment/klein_circles.yaml  training configuration
+configs/experiment/capacity_ablation.yaml  MLP-width ablation
 data/appendix/                          exported appendix curves
 notebooks/KleinVAE.ipynb               complete experiment notebook
 results/klein_circles/                 single-run results and figures
 results/appendix/                       appendix figures and metadata
 scripts/evaluate_checkpoint.py         checkpoint evaluation
 scripts/plot_appendix.py                appendix figure generation
+scripts/run_capacity_ablation.py        width-ablation train and collect
 scripts/run_notebook.py                 notebook execution
 src/                                    datasets, models, callbacks, and metrics
 tests/                                  unit and integration tests

@@ -172,3 +172,6 @@ lightning_logs/
 !results/klein_circles/*.png
 
 unsorted/
+*raw/
+.wandb_backfill/
+results/

@@ -1,0 +1,25 @@
+# @package _global_
+#
+# Width ablation on the Klein-Circles protocol. Same data, seed, optimizer,
+# latent dim, and losses as experiment=klein_circles; only MLP width changes.
+#
+#   uv run python scripts/run_capacity_ablation.py
+#   uv run python main.py --multirun experiment=capacity_ablation \
+#     model=klein_vae,torus_vae,vanilla_vae arch=tiny,small,official
+
+defaults:
+  - klein_circles
+
+tags: ["paper", "capacity-ablation"]
+
+# Named encoder widths. Decoder is the reverse. Final encoder width is
+# latent_dim + 3 (full 2x2 covariance), i.e. 5 for latent_dim=2.
+#   tiny     900 → 64 → 5
+#   small    900 → 256 → 64 → 5
+#   official 900 → 1024 → 512 → 128 → 32 → 5
+arch: official
+archs:
+  tiny: [64]
+  small: [256, 64]
+  official: [1024, 512, 128, 32]
+hidden_dims: ${archs.${arch}}
