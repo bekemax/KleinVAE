@@ -24,6 +24,7 @@ dependencies = [
     "rich==13.9.2",
     "omegaconf>=2.3.0",
     "hydra-colorlog>=1.2.0",
+    "hydra-joblib-launcher>=1.2.0",
     # --------- others ---------- #
     "pytest>=9.0.3",
     "rootutils",

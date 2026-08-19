@@ -48,12 +48,12 @@ model:
 
 trainer:
   min_epochs: 50
-  max_epochs: 50
+  max_epochs: 300
   deterministic: True
 
 callbacks:
   topology_metrics:
-    every_n_epochs: 50
+    every_n_epochs: 300
 
 extras:
   enforce_tags: False

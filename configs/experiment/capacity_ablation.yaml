@@ -12,8 +12,6 @@ defaults:
 
 tags: ["paper", "capacity-ablation"]
 
-# Named encoder widths. Decoder is the reverse. Final encoder width is
-# latent_dim + 3 (full 2x2 covariance), i.e. 5 for latent_dim=2.
 #   tiny     900 → 64 → 5
 #   small    900 → 256 → 64 → 5
 #   official 900 → 1024 → 512 → 128 → 32 → 5
@@ -23,3 +21,9 @@ archs:
   small: [256, 64]
   official: [1024, 512, 128, 32]
 hidden_dims: ${archs.${arch}}
+
+test: False
+
+callbacks:
+  topology_metrics:
+    compute_during_training: False

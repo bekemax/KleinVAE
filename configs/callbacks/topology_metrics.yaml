@@ -9,3 +9,4 @@ topology_metrics:
   scale_quantile: 0.9
   topology_dimensions: [1, 2]
   input_metric: ambient
+  compute_during_training: True

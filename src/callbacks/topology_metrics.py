@@ -36,6 +36,7 @@ class TopologyMetricsCallback(Callback):
         scale_quantile: float = 0.9,
         topology_dimensions: Sequence[int] = (1, 2),
         input_metric: str = "ambient",
+        compute_during_training: bool = True,
     ) -> None:
         if input_metric not in {"ambient", "intrinsic_klein"}:
             raise ValueError("input_metric must be 'ambient' or 'intrinsic_klein'")
@@ -48,6 +49,8 @@ class TopologyMetricsCallback(Callback):
         self.scale_quantile = scale_quantile
         self.topology_dimensions = tuple(topology_dimensions)
         self.input_metric = input_metric
+        # Sweeps score the best checkpoint separately, so in-training diagrams are pure overhead.
+        self.compute_during_training = compute_during_training
         self.original_pds: dict[int, list[np.ndarray]] | None = None
         self.normalized_original_pds: dict[int, list[np.ndarray]] | None = None
         self.test_original_pds: dict[int, list[np.ndarray]] | None = None
@@ -291,7 +294,9 @@ class TopologyMetricsCallback(Callback):
         )
 
         is_last_epoch = trainer.current_epoch == trainer.max_epochs - 1
-        should_compute = ((trainer.current_epoch + 1) % self.every_n_epochs == 0) or is_last_epoch
+        should_compute = self.compute_during_training and (
+            ((trainer.current_epoch + 1) % self.every_n_epochs == 0) or is_last_epoch
+        )
         if not should_compute:
             return
 
@@ -359,6 +364,8 @@ class TopologyMetricsCallback(Callback):
 
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         if trainer.global_rank != 0 or not self.save_artifacts or not self._has_eval_data(trainer):
+            return
+        if not self.compute_during_training:
             return
 
         if self.log_reconstruction_pd and self.final_reconstructed_pds is None:

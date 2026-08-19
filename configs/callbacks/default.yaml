@@ -1,5 +1,6 @@
 defaults:
   - model_checkpoint
+  - early_stopping
   - model_summary
   - learning_rate_monitor
   - rich_progress_bar
@@ -9,10 +10,14 @@ defaults:
 model_checkpoint:
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch:03d}"
-  monitor: "val_loss"
+  monitor: "val_recon_nll" #val_loss
   mode: "min"
   save_last: True
   auto_insert_metric_name: False
+
+early_stopping:
+  monitor: "val_recon_nll"
+  patience: 30
 
 model_summary:
   max_depth: -1

@@ -10,12 +10,19 @@
 
 defaults:
   - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
 
 hydra:
   mode: "MULTIRUN"
+  launcher:
+    n_jobs: 4
   sweeper:
     params:
       experiment: capacity_ablation
       model: klein_vae,torus_vae,vanilla_vae
       arch: tiny #,small,official
       seed: 27,28,29
+
+logger:
+  wandb:
+    group: epochs300
