@@ -1,0 +1,21 @@
+# @package _global_
+
+# Hyperparameter search config for width / capacity ablation
+#
+# Run with:
+#   python main.py -m hparams_search=capacity_ablation
+#
+# Or override sweep dimensions from CLI:
+#   python main.py -m hparams_search=capacity_ablation ++hydra.sweeper.params.arch=tiny,small
+
+defaults:
+  - override /hydra/sweeper: basic
+
+hydra:
+  mode: "MULTIRUN"
+  sweeper:
+    params:
+      experiment: capacity_ablation
+      model: klein_vae,torus_vae,vanilla_vae
+      arch: tiny #,small,official
+      seed: 27,28,29

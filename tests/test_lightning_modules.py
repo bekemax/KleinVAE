@@ -1,6 +1,7 @@
 import pytest
 import torch
 from torch.distributions import MultivariateNormal, kl_divergence
+from typing import Any
 from types import SimpleNamespace
 
 from src.callbacks.topology_metrics import TopologyMetricsCallback
@@ -166,3 +167,111 @@ def test_empirical_latent_code_variances_are_finite(
 
     assert variance.ndim == 0
     assert torch.isfinite(variance) and variance >= 0
+
+
+def test_topology_metrics_callback_runs_on_test_epoch_end() -> None:
+    module = _module(KleinVAEModule)
+    data = torch.rand(16, 6)
+    params = torch.rand(16, 2)
+    datamodule = SimpleNamespace(
+        data_for_pd=data,
+        validation_data_for_pd=data,
+        validation_parameters_for_pd=params,
+        test_data_for_pd=data,
+        test_parameters_for_pd=params,
+    )
+    logged: dict[str, Any] = {}
+    module.log = lambda key, val, **kwargs: logged.update({key: val})
+    module.print = lambda *args, **kwargs: None
+    trainer = SimpleNamespace(
+        datamodule=datamodule,
+        current_epoch=0,
+        max_epochs=1,
+        global_rank=0,
+        default_root_dir="/tmp/test_topology_callback",
+        loggers=[],
+    )
+    callback = TopologyMetricsCallback(
+        save_figures=False,
+        save_artifacts=False,
+        topology_dimensions=[1],
+        field_orders=[2],
+    )
+    callback.on_test_epoch_end(trainer, module)
+    assert "test_latent_code_variance" in logged
+    assert "test_latent_topology_score" in logged
+    assert "test_bottleneck_over_2_dim_0" in logged
+    assert "test_total_bottleneck_over_2" in logged
+    assert callback.test_latent_topology_score is not None
+
+
+def _logging_module(module_cls: type[VAEModule] = VAEModule) -> tuple[VAEModule, dict[str, Any]]:
+    module = _module(module_cls)
+    logged: dict[str, Any] = {}
+    module.log_dict = lambda metrics, **kwargs: logged.update(metrics)
+    return module, logged
+
+
+@pytest.mark.parametrize("stage", ["val", "test"])
+def test_shared_step_separates_posterior_mean_nll_from_the_elbo_term(stage: str) -> None:
+    """recon_nll must mean what evaluate_checkpoint.py means by it: the deterministic one."""
+    torch.manual_seed(0)
+    module, logged = _logging_module()
+    x = torch.rand(4, 6)
+
+    module._shared_step(stage, (x,))
+
+    assert f"{stage}_recon_nll" in logged and f"{stage}_elbo_recon_nll" in logged
+    mu, _ = module.model.encode(x)
+    with torch.no_grad():
+        expected = module.reconstruction_nll(x, module.model.decode(module.project_latent(mu)))
+    torch.testing.assert_close(logged[f"{stage}_recon_nll"], expected)
+    # The sampled term feeds the ELBO; the deterministic one must not.
+    torch.testing.assert_close(logged[f"{stage}_negative_elbo"], logged[f"{stage}_elbo_recon_nll"] + logged[f"{stage}_kl_loss"])
+
+
+def test_training_step_skips_the_extra_deterministic_decode() -> None:
+    """Training throughput matters more than a metric nothing reads there."""
+    module, logged = _logging_module()
+
+    module._shared_step("train", (torch.rand(4, 6),))
+
+    assert "train_elbo_recon_nll" in logged
+    assert "train_recon_nll" not in logged
+
+
+def _pd_datamodule(**overrides: Any) -> SimpleNamespace:
+    data, params = torch.rand(12, 6), torch.rand(12, 2)
+    fields = dict(
+        data_for_pd=data,
+        validation_parameters_for_pd=params,
+        test_data_for_pd=data,
+        test_parameters_for_pd=params,
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+def test_topology_callback_rejects_an_unknown_stage() -> None:
+    callback = TopologyMetricsCallback()
+    trainer = SimpleNamespace(datamodule=_pd_datamodule())
+
+    with pytest.raises(ValueError, match="Unknown stage"):
+        callback._get_normalized_original_diagrams(trainer, stage="validation")
+
+
+def test_topology_callback_fails_loudly_when_test_parameters_are_missing() -> None:
+    """Falling back to the validation parameters would pair them with the test point cloud."""
+    callback = TopologyMetricsCallback(input_metric="intrinsic_klein", field_orders=[2])
+    trainer = SimpleNamespace(datamodule=_pd_datamodule(test_parameters_for_pd=None))
+
+    with pytest.raises(ValueError, match="test_parameters_for_pd"):
+        callback._get_normalized_original_diagrams(trainer, stage="test")
+
+
+def test_topology_callback_uses_validation_parameters_for_the_val_stage() -> None:
+    callback = TopologyMetricsCallback(input_metric="intrinsic_klein", field_orders=[2])
+    trainer = SimpleNamespace(datamodule=_pd_datamodule(validation_parameters_for_pd=None))
+
+    with pytest.raises(ValueError, match="validation_parameters_for_pd"):
+        callback._get_normalized_original_diagrams(trainer, stage="val")

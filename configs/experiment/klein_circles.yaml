@@ -8,7 +8,7 @@ defaults:
   - override /data: circles
   - override /model: klein_vae
   - override /callbacks: default
-  - override /logger: csv_wandb
+  - override /logger: default
   - override /trainer: cpu
 
 tags: ["paper", "klein-circles"]

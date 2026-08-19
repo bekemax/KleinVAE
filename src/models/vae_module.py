@@ -132,18 +132,22 @@ class VAEModule(pl.LightningModule):
         x = batch[0].float()
         reconstruction, mu, covariance_parameters = self(x)
         objective, reconstruction_term, kl = self._vae_loss(x, reconstruction, mu, covariance_parameters)
-        reconstruction_nll = self.reconstruction_nll(x, reconstruction)
-        negative_elbo = reconstruction_nll + kl
+        elbo_reconstruction_nll = self.reconstruction_nll(x, reconstruction)
+        negative_elbo = elbo_reconstruction_nll + kl
         posterior_log_variance = self.model.posterior_log_variance(covariance_parameters).mean()
 
         metrics = {
             f"{stage}_loss": objective,
             f"{stage}_recon_loss": reconstruction_term,
-            f"{stage}_recon_nll": reconstruction_nll,
+            f"{stage}_elbo_recon_nll": elbo_reconstruction_nll,
             f"{stage}_kl_loss": kl,
             f"{stage}_negative_elbo": negative_elbo,
             f"{stage}_posterior_log_variance": posterior_log_variance,
         }
+        if stage != "train":
+            with torch.no_grad():
+                mean_reconstruction = self.model.decode(self.project_latent(mu))
+            metrics[f"{stage}_recon_nll"] = self.reconstruction_nll(x, mean_reconstruction)
         self.log_dict(
             metrics,
             on_step=False,

@@ -1,13 +1,13 @@
-"""Capacity ablation: Klein-Circles protocol at three MLP widths.
+"""Capacity ablation.
 
-The official encoder ``900 → 1024 → 512 → 128 → 32 → 5`` is ~3.0M parameters
-on a 2-parameter binary-disk dataset. This sweep holds data, seed, optimizer,
-latent dimension, and losses fixed and varies ``hidden_dims``.
+Training is a Hydra multirun over one named sweep from `configs/hparams_search`;
+this script launches it and collects the runs into `results/<ablation>/results.csv`.
 
     uv run python scripts/run_capacity_ablation.py
+    uv run python scripts/run_capacity_ablation.py --ablation latent_dim_ablation
     uv run python scripts/run_capacity_ablation.py --dry-run
     uv run python scripts/run_capacity_ablation.py --collect-only
-    uv run python scripts/run_capacity_ablation.py --arch tiny --model euclidean
+    uv run python scripts/run_capacity_ablation.py trainer=gpu
 """
 
 import argparse
@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import torch
-
 import rootutils
+import torch
+from omegaconf import OmegaConf
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -102,6 +102,75 @@ def train_command(
         f"hydra.run.dir={run_directory}",
         *extra_overrides,
     ]
+
+
+def sweep_command(
+    *,
+    python: str,
+    ablation: str,
+    sweep_directory: Path,
+    extra_overrides: Sequence[str],
+) -> list[str]:
+    """Hydra multirun for one named ablation, e.g. `hparams_search=capacity_ablation`."""
+
+    return [
+        python,
+        str(ROOT / "main.py"),
+        "-m",
+        f"hparams_search={ablation}",
+        f"hydra.sweep.dir={sweep_directory}",
+        # Name subdirectories after the swept overrides so a rerun lands in the same place.
+        "hydra.sweep.subdir=${hydra.job.override_dirname}",
+        "hydra.job.config.override_dirname.exclude_keys=[hparams_search,experiment,logger,trainer]",
+        *extra_overrides,
+    ]
+
+
+MODULE_TARGET_TO_MODEL_KIND = {
+    "KleinVAEModule": "klein",
+    "TorusVAEModule": "torus",
+    "VAEModule": "euclidean",
+}
+
+
+def sweep_run_directories(sweep_directory: Path) -> list[Path]:
+    """Every Hydra run under a sweep directory, identified by its saved config."""
+
+    return sorted(path.parent.parent for path in sweep_directory.glob("**/.hydra/config.yaml"))
+
+
+def run_metadata(run_directory: Path) -> dict[str, Any]:
+    """Recover arch, model kind, seed and latent dim from the config Hydra saved for the run."""
+
+    config = OmegaConf.load(run_directory / ".hydra" / "config.yaml")
+    target = str(OmegaConf.select(config, "model._target_", default="")).rsplit(".", 1)[-1]
+    if target not in MODULE_TARGET_TO_MODEL_KIND:
+        raise ValueError(f"Unrecognised model target {target!r} in {run_directory}")
+    return {
+        "arch": str(OmegaConf.select(config, "arch", default="unknown")),
+        "model_kind": MODULE_TARGET_TO_MODEL_KIND[target],
+        "seed": int(OmegaConf.select(config, "seed")),
+        "latent_dim": int(OmegaConf.select(config, "model.model.latent_dim", default=LATENT_DIM)),
+    }
+
+
+def stale_evaluation_reason(
+    *,
+    row: dict[str, Any] | None,
+    row_path: Path | None,
+    checkpoint_path: Path | None,
+    persistence_sample_size: int,
+) -> str | None:
+    """Why a stored evaluation must be recomputed, or None when it can be reused."""
+
+    if row is None or row_path is None:
+        return "not evaluated yet"
+    # Rows computed at different sample sizes are not comparable, so never mix them in one table.
+    if int(row.get("topology_sample_size", -1)) != persistence_sample_size:
+        return f"sample size changed {row.get('topology_sample_size')} -> {persistence_sample_size}"
+    if checkpoint_path is not None and checkpoint_path.stat().st_mtime > row_path.stat().st_mtime:
+        return "checkpoint is newer than the stored evaluation"
+    return None
 
 
 def _load_evaluate_checkpoint() -> Any:
@@ -235,6 +304,11 @@ def write_results(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--ablation",
+        default="capacity_ablation",
+        help="Name of the configs/hparams_search sweep to run, e.g. capacity_ablation.",
+    )
     parser.add_argument("--seed", type=int, action="append")
     parser.add_argument("--arch", action="append", choices=tuple(ARCHS))
     parser.add_argument("--model", action="append", choices=tuple(MODELS))
@@ -250,6 +324,12 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Skip training when a numbered checkpoint already exists (default: true).",
+    )
+    parser.add_argument(
+        "--skip-evaluated",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Reuse a stored evaluation unless its checkpoint or sample size changed (default: true).",
     )
     parser.add_argument(
         "--fast",
@@ -302,49 +382,30 @@ def main() -> None:
                 f"{parameter_count(hidden_dims, latent_dim=latent_dim):,}"
             )
 
-    cells = [
-        (arch, model_kind, seed, latent_dim)
-        for arch in args.arch
-        for model_kind in args.model
-        for seed in args.seed
-        for latent_dim in args.latent_dim
-        if model_kind == "euclidean" or latent_dim == LATENT_DIM
-    ]
-    if not cells:
-        raise SystemExit("No valid cells: Klein and Torus require latent_dim=2")
-    print(f"grid: {len(cells)} runs  (arch × model × seed × valid latent dim)")
+    sweep_directory = ROOT / "logs" / args.ablation
+    output_dir = ROOT / "results" / args.ablation
+    command = sweep_command(
+        python=sys.executable,
+        ablation=args.ablation,
+        sweep_directory=sweep_directory,
+        extra_overrides=extra_overrides,
+    )
+
+    if args.dry_run:
+        print(" ".join(command))
+        return
 
     if not args.collect_only:
-        for arch, model_kind, seed, latent_dim in cells:
-            directory = run_dir(ROOT, seed, arch, model_kind, latent_dim)
-            command = train_command(
-                python=sys.executable,
-                seed=seed,
-                arch=arch,
-                model_kind=model_kind,
-                latent_dim=latent_dim,
-                run_directory=directory,
-                extra_overrides=extra_overrides,
-            )
-            existing = best_checkpoint(directory)
-            label = f"{arch}/{model_kind}/latent{latent_dim}/seed{seed}"
-            if args.dry_run:
-                skipped = "  # skip-existing" if args.skip_existing and existing is not None else ""
-                print(" ".join(command) + skipped)
-                continue
-            if args.skip_existing and existing is not None:
-                print(f"skip train {label}: {existing}")
-                continue
-            directory.mkdir(parents=True, exist_ok=True)
-            print(f"train {label}")
-            subprocess.run(command, cwd=ROOT, check=True)
+        print(f"sweep {args.ablation} -> {sweep_directory}")
+        subprocess.run(command, cwd=ROOT, check=True)
 
-    if args.dry_run or (args.fast and not args.collect_only):
+    if args.fast and not args.collect_only:
         return
 
     evaluate_module = _load_evaluate_checkpoint()
-    raw_dir = ROOT / "results" / "capacity_ablation" / "raw"
+    raw_dir = output_dir / "raw"
     existing_rows: dict[tuple[str, str, int, int], dict[str, Any]] = {}
+    existing_paths: dict[tuple[str, str, int, int], Path] = {}
     if raw_dir.exists():
         for path in raw_dir.glob("*.json"):
             try:
@@ -357,31 +418,50 @@ def main() -> None:
                     int(data["latent_dim"]),
                 )
                 existing_rows[key] = data
+                existing_paths[key] = path
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
 
-    for arch, model_kind, seed, latent_dim in cells:
-        directory = run_dir(ROOT, seed, arch, model_kind, latent_dim)
-        label = f"{arch}/{model_kind}/latent{latent_dim}/seed{seed}"
+    run_directories = sweep_run_directories(sweep_directory)
+    if not run_directories:
+        raise SystemExit(f"No Hydra runs under {sweep_directory}; run without --collect-only first")
+    print(f"collecting {len(run_directories)} runs from {sweep_directory}")
+
+    for directory in run_directories:
+        metadata = run_metadata(directory)
+        label = f"{metadata['arch']}/{metadata['model_kind']}/latent{metadata['latent_dim']}/seed{metadata['seed']}"
+        key = (metadata["arch"], metadata["model_kind"], metadata["seed"], metadata["latent_dim"])
+        if args.skip_evaluated:
+            reason = stale_evaluation_reason(
+                row=existing_rows.get(key),
+                row_path=existing_paths.get(key),
+                checkpoint_path=best_checkpoint(directory),
+                persistence_sample_size=args.persistence_sample_size,
+            )
+            if reason is None:
+                print(f"skip eval {label}: already evaluated")
+                continue
+            if key in existing_rows:
+                print(f"re-evaluating {label}: {reason}")
         try:
             row = evaluate_run(
                 directory=directory,
-                arch=arch,
-                model_kind=model_kind,
-                seed=seed,
+                arch=metadata["arch"],
+                model_kind=metadata["model_kind"],
+                seed=metadata["seed"],
                 persistence_sample_size=args.persistence_sample_size,
                 evaluate_module=evaluate_module,
             )
         except FileNotFoundError as error:
             print(f"skip eval {label}: {error}")
             continue
-        existing_rows[(arch, model_kind, seed, latent_dim)] = row
+        existing_rows[key] = row
         print(f"{label}: recon_nll={row['recon_nll']:.4f}  topo={row['latent_topology_score']:.4f}  n_params={row['n_params']:,}")
 
     rows = list(existing_rows.values())
     if not rows:
         raise SystemExit("No checkpoints to evaluate")
-    csv_path = write_results(rows, ROOT / "results" / "capacity_ablation", args.seed)
+    csv_path = write_results(rows, output_dir, args.seed)
     print(csv_path)
 
 

@@ -1,0 +1,19 @@
+# @package _global_
+
+# Hyperparameter search config for width / capacity ablation
+#
+# Run with:
+#   python main.py -m hparams_search=latent_dim_ablation
+
+defaults:
+  - override /hydra/sweeper: basic
+
+hydra:
+  mode: "MULTIRUN"
+  sweeper:
+    params:
+      experiment: latent_dim_ablation
+      model: vanilla_vae
+      arch: tiny,small,official
+      seed: 27,28,29
+      model.model.latent_dim: 2,3,4

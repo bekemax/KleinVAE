@@ -95,12 +95,18 @@ records the following epoch-level quantities:
 
 ## Capacity ablation
 
-The capacity grid varies MLP width, seed, and Euclidean latent dimension:
+The capacity grid varies MLP width, seed, and Euclidean latent dimension.
+It can be run via Hydra multirun sweep:
 
 ```bash
-uv run python scripts/run_capacity_ablation.py \
-  --seed 27 --seed 28 --seed 29 \
-  --latent-dim 2 --latent-dim 3 --latent-dim 4
+uv run python main.py -m hparams_search=capacity_ablation
+```
+
+Or using the Python runner, which also collects every run into
+`results/<ablation>/results.csv`:
+
+```bash
+uv run python scripts/run_capacity_ablation.py --ablation capacity_ablation
 ```
 
 | `arch` | Hidden dimensions | 2D / 3D / 4D parameters |

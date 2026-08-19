@@ -7,7 +7,7 @@ defaults:
   - data: circles
   - model: klein_vae
   - callbacks: default
-  - logger: wandb
+  - logger: default
   - trainer: default
   - paths: default
   - extras: default
