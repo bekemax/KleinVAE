@@ -152,6 +152,9 @@ def sync_wandb(sweep_directory: Path) -> int:
     )
     if result.returncode != 0:
         print(f"wandb sync exited with {result.returncode}; sync manually before deleting logs")
+        return len(runs)
+    for run in runs:
+        Path(f"{run}.synced").touch()
     return len(runs)
 
 

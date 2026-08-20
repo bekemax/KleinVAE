@@ -20,7 +20,7 @@ hydra:
     params:
       experiment: capacity_ablation
       model: klein_vae,torus_vae,vanilla_vae
-      arch: small #,tiny,official
+      arch: tiny,small,official
       seed: 27,28,29
 
 logger:
