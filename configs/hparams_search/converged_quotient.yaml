@@ -1,0 +1,28 @@
+# @package _global_
+#
+# Produces results/converged_quotient: quotient models at lr 3e-4, evidence for retraction 1.
+
+# Klein and torus at latent_dim 2, trained to the epoch ceiling.
+#
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation converged_quotient
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 6
+  sweeper:
+    params:
+      experiment: converged_protocol
+      model: klein_vae,torus_vae
+      arch: official
+      seed: 27,28,29
+
+logger:
+  wandb:
+    group: converged-protocol
+    offline: True

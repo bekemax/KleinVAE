@@ -1,0 +1,16 @@
+# @package _global_
+#
+# The latent_dim_ablation protocol with early stopping taken out of the comparison.
+
+defaults:
+  - latent_dim_ablation
+
+tags: ["paper", "converged-protocol"]
+
+callbacks:
+  early_stopping:
+    patience: ${trainer.max_epochs}
+
+logger:
+  wandb:
+    name: "${model_name}-d${model.model.latent_dim}-s${seed}"

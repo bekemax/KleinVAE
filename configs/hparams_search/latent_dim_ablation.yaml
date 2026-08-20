@@ -1,19 +1,30 @@
 # @package _global_
+#
+# Superseded by converged_euclid; kept as the record of the patience-30 protocol.
 
-# Hyperparameter search config for width / capacity ablation
+# The Klein bottle embeds in R^4 but not R^3, so a Euclidean latent needs at least four
+# dimensions to carry the parameter space without tearing; the quotient latent needs two.
 #
 # Run with:
-#   python main.py -m hparams_search=latent_dim_ablation
+#   uv run python scripts/run_capacity_ablation.py --ablation latent_dim_ablation
 
 defaults:
   - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
 
 hydra:
   mode: "MULTIRUN"
+  launcher:
+    n_jobs: 6
   sweeper:
     params:
       experiment: latent_dim_ablation
       model: vanilla_vae
-      arch: tiny,small,official
+      arch: official
       seed: 27,28,29
-      model.model.latent_dim: 2,3,4
+      model.model.latent_dim: 2,3,4,5
+
+logger:
+  wandb:
+    group: latent-dim-ablation
+    offline: True

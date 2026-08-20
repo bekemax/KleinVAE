@@ -1,0 +1,29 @@
+# @package _global_
+#
+# Produces results/invariant_decoder: the headline ablation, 18 runs.
+
+# Capacity ablation on the invariant decoder basis.
+#
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation invariant_decoder
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 5
+  sweeper:
+    params:
+      experiment: invariant_decoder
+      model: klein_vae,torus_vae,vanilla_vae
+      arch: official #tiny,small
+      seed: 27,28,29
+
+logger:
+  wandb:
+    group: invariant-decoder
+    # Logging over the network costs ~20% of each epoch; sync with `wandb sync` afterwards.
+    offline: True

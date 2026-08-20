@@ -1,0 +1,31 @@
+# @package _global_
+#
+# Produces results/converged_euclid_lr1e3: the baseline numbers the paper reports.
+
+# The Euclidean baseline at the step size the quotient models were tuned on, without early stopping.
+#
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation converged_euclid_lr1e3
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 3
+  sweeper:
+    params:
+      experiment: converged_protocol
+      model: vanilla_vae
+      arch: official
+      seed: 27,28,29
+      model.model.latent_dim: 2,3
+      model.lr: 0.001
+
+logger:
+  wandb:
+    group: converged-euclid-lr1e3
+    name: "${model_name}-d${model.model.latent_dim}-s${seed}-lr1e3"
+    offline: True

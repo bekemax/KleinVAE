@@ -1,0 +1,10 @@
+defaults:
+  - vanilla_vae
+
+# Control for vanilla_vae vs klein_vae: matched decoder input width and a smooth
+# periodic basis, but no identification, so a Klein win cannot be credited to featurization.
+model:
+  latent_feature_map:
+    _target_: src.models.components.latent_features.RandomFourierFeatures
+    latent_dim: ${..latent_dim}
+    output_dim: 5

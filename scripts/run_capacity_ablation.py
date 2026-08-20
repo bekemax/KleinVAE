@@ -158,6 +158,24 @@ def sync_wandb(sweep_directory: Path) -> int:
     return len(runs)
 
 
+def upload_topology(
+    *,
+    ablation: str,
+    sweep_directory: Path,
+    persistence_sample_size: int,
+    jobs: int,
+) -> None:
+    """Attach persistence diagrams to the sweep's wandb runs, which train without them."""
+    from scripts.backfill_wandb_topology import backfill
+
+    backfill(
+        search_config=ROOT / "configs" / "hparams_search" / f"{ablation}.yaml",
+        sweep_root=sweep_directory,
+        jobs=jobs,
+        persistence_sample_size=persistence_sample_size,
+    )
+
+
 def sweep_run_directories(sweep_directory: Path) -> list[Path]:
     """Every Hydra run under a sweep directory, identified by its saved config."""
 
@@ -236,7 +254,8 @@ def evaluate_run(
         "latent_dim": latent_dim,
         "hidden_dims": hidden_dims,
         "encoder": encoder_spec(hidden_dims, latent_dim=latent_dim),
-        "n_params": parameter_count(hidden_dims, latent_dim=latent_dim),
+        # Counted from the loaded network so a latent feature map widens the decoder here too.
+        "n_params": sum(parameter.numel() for parameter in module.model.parameters()),
         "training_seed": seed,
         "evaluation_seed": seed,
         "checkpoint": str(checkpoint_path),
@@ -355,6 +374,18 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Upload offline wandb runs after the sweep (default: true).",
+    )
+    parser.add_argument(
+        "--upload-topology",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Attach persistence diagrams to the sweep's wandb runs (default: true).",
+    )
+    parser.add_argument(
+        "--topology-jobs",
+        type=int,
+        default=5,
+        help="Parallel workers for the diagram computation.",
     )
     parser.add_argument(
         "--skip-evaluated",
@@ -497,6 +528,18 @@ def main() -> None:
         raise SystemExit("No checkpoints to evaluate")
     csv_path = write_results(rows, output_dir, args.seed)
     print(csv_path)
+
+    if args.upload_topology and not args.fast:
+        # A wandb failure here must not cost the results table that is already on disk.
+        try:
+            upload_topology(
+                ablation=args.ablation,
+                sweep_directory=sweep_directory,
+                persistence_sample_size=args.persistence_sample_size,
+                jobs=args.topology_jobs,
+            )
+        except Exception as error:
+            print(f"topology upload failed ({error}); rerun scripts/backfill_wandb_topology.py")
 
 
 if __name__ == "__main__":

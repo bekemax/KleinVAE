@@ -1,4 +1,6 @@
 # @package _global_
+#
+# Produces results/capacity_ablation: the raw decoder, before invariant features.
 
 # Hyperparameter search config for width / capacity ablation
 #

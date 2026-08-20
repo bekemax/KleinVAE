@@ -21,7 +21,15 @@ from torch import nn
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
+from lightning import LightningDataModule
+
 from src.data.circles_datamodule import CirclesDatamodule
+from src.models.components.latent_features import (
+    KleinFourierFeatures,
+    LatentFeatureMap,
+    RandomFourierFeatures,
+    TorusFourierFeatures,
+)
 from src.models.components.vae import SimpleVAE
 from src.models.klein_vae_module import KleinVAEModule
 from src.models.torus_vae_module import TorusVAEModule
@@ -80,6 +88,22 @@ def _architecture_from_state_dict(state_dict: dict[str, torch.Tensor], covarianc
     return input_dim, hidden_dims, latent_dim, covariance_type
 
 
+def _feature_map_from_state_dict(state_dict: dict[str, torch.Tensor], model_kind: str, latent_dim: int) -> LatentFeatureMap | None:
+    """Rebuild the decoder's latent lift, whose width the first decoder layer records."""
+
+    decoder_input_dim = int(state_dict["model.decoder.0.weight"].shape[1])
+    if "model.latent_feature_map.frequencies" in state_dict:
+        # Random features are the only map with buffers, so the state dict names them outright.
+        return RandomFourierFeatures(latent_dim=latent_dim, output_dim=decoder_input_dim)
+    if decoder_input_dim == latent_dim:
+        return None
+    if model_kind == "klein":
+        return KleinFourierFeatures()
+    if model_kind == "torus":
+        return TorusFourierFeatures()
+    raise ValueError(f"Cannot infer a {model_kind} latent feature map of width {decoder_input_dim}")
+
+
 def _load_model(checkpoint: dict[str, Any], model_kind: str, covariance_type: str | None) -> VAEModule:
     input_dim, hidden_dims, latent_dim, inferred_covariance = _architecture_from_state_dict(checkpoint["state_dict"], covariance_type)
     network = SimpleVAE(
@@ -87,6 +111,7 @@ def _load_model(checkpoint: dict[str, Any], model_kind: str, covariance_type: st
         hidden_dims=hidden_dims,
         latent_dim=latent_dim,
         covariance_type=inferred_covariance,  # type: ignore[arg-type]
+        latent_feature_map=_feature_map_from_state_dict(checkpoint["state_dict"], model_kind, latent_dim),
     )
     hparams = checkpoint["hyper_parameters"]
     common = {
@@ -113,20 +138,40 @@ def _load_model(checkpoint: dict[str, Any], model_kind: str, covariance_type: st
     return module
 
 
+# Lightning records a datamodule's hyperparameters in the checkpoint but not its class.
+DATAMODULES: tuple[type[LightningDataModule], ...] = (CirclesDatamodule,)
+
+
+def _datamodule_class(saved: dict[str, Any], name: str | None = None) -> type[LightningDataModule]:
+    """The registered datamodule whose signature accepts most of the saved hyperparameters."""
+    if name is not None:
+        for candidate in DATAMODULES:
+            if candidate.__name__ == name:
+                return candidate
+        known = ", ".join(candidate.__name__ for candidate in DATAMODULES)
+        raise ValueError(f"Unknown datamodule {name!r}; expected one of {known}")
+    def accepted(candidate: type[LightningDataModule]) -> int:
+        return sum(key in inspect.signature(candidate).parameters for key in saved)
+
+    return max(DATAMODULES, key=accepted)
+
+
 def _load_data(
     checkpoint: dict[str, Any],
     *,
     persistence_sample_size: int,
     data_seed: int | None,
-) -> CirclesDatamodule:
+    datamodule_name: str | None = None,
+) -> LightningDataModule:
     saved = dict(checkpoint.get("datamodule_hyper_parameters", {}))
-    allowed = set(inspect.signature(CirclesDatamodule).parameters)
+    datamodule_class = _datamodule_class(saved, datamodule_name)
+    allowed = set(inspect.signature(datamodule_class).parameters)
     kwargs = {key: value for key, value in saved.items() if key in allowed}
     kwargs["persistence_subsample_size"] = persistence_sample_size
     if data_seed is not None:
         kwargs["seed"] = data_seed
         kwargs["split_seed"] = None
-    datamodule = CirclesDatamodule(**kwargs)
+    datamodule = datamodule_class(**kwargs)
     datamodule.setup()
     return datamodule
 
@@ -141,7 +186,7 @@ def _latent_distance_matrix(module: VAEModule, means: torch.Tensor) -> torch.Ten
 
 def evaluate(
     module: VAEModule,
-    datamodule: CirclesDatamodule,
+    datamodule: LightningDataModule,
     *,
     split: str,
     scale_quantile: float,
@@ -186,7 +231,10 @@ def evaluate(
 
     if intrinsic_input_metric:
         if topology_parameters is None:
-            raise ValueError("The datamodule does not expose intrinsic Klein parameters")
+            raise ValueError(
+                f"{type(datamodule).__name__} exposes no intrinsic Klein parameters; "
+                "evaluate it with intrinsic_input_metric=False"
+            )
         input_distance_matrix = klein_distance_matrix(topology_parameters)
     else:
         input_distance_matrix = euclidean_distance_matrix(topology_input)
@@ -263,6 +311,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--scale-quantile", type=float, default=0.9)
     parser.add_argument(
+        "--datamodule",
+        choices=tuple(candidate.__name__ for candidate in DATAMODULES),
+        help="Override the datamodule inferred from the checkpoint's saved hyperparameters.",
+    )
+    parser.add_argument(
         "--intrinsic-input-metric",
         action="store_true",
         help="Use known generating Klein coordinates for the input PD (synthetic data only).",
@@ -280,6 +333,7 @@ def main() -> None:
         checkpoint,
         persistence_sample_size=args.persistence_sample_size,
         data_seed=args.data_seed,
+        datamodule_name=args.datamodule,
     )
     result = {
         "checkpoint": str(args.checkpoint),

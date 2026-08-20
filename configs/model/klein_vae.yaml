@@ -29,6 +29,8 @@ model:
   hidden_dims: ${hidden_dims} #[1024, 512, 128, 32]
   latent_dim: 2
   covariance_type: full
+  latent_feature_map:
+    _target_: src.models.components.latent_features.KleinFourierFeatures
 
 recon_loss:
   _target_: torch.nn.BCEWithLogitsLoss

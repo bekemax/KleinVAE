@@ -1,0 +1,8 @@
+# @package _global_
+#
+# capacity_ablation with the invariant decoder basis. Only the decoder's input changes.
+
+defaults:
+  - capacity_ablation
+
+tags: ["paper", "invariant-decoder"]

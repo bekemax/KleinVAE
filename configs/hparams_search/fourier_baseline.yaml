@@ -1,0 +1,28 @@
+# @package _global_
+#
+# Produces results/fourier_baseline: random Fourier features, the invariance control.
+
+# Euclidean control on a matched-width periodic basis carrying no identification.
+
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation fourier_baseline
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 5
+  sweeper:
+    params:
+      experiment: invariant_decoder
+      model: vanilla_vae_fourier
+      arch: tiny,small,official
+      seed: 27,28,29
+
+logger:
+  wandb:
+    group: fourier-baseline
+    offline: True

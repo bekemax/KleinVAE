@@ -1,0 +1,28 @@
+# @package _global_
+#
+# Superseded by converged_quotient; kept as the record of the patience-30 protocol.
+
+# The quotient models on the same training protocol as latent_dim_ablation.
+#
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation matched_protocol
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 5
+  sweeper:
+    params:
+      experiment: latent_dim_ablation
+      model: klein_vae,torus_vae
+      arch: official
+      seed: 27,28,29
+
+logger:
+  wandb:
+    group: matched-protocol
+    offline: True

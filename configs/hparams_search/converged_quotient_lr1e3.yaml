@@ -1,0 +1,30 @@
+# @package _global_
+#
+# Produces results/converged_quotient_lr1e3: the quotient numbers the paper reports.
+
+# The quotient models converge at 1e-3 and plateau at 3e-4; this is converged_quotient at the step size klein was tuned on.
+#
+# Run with:
+#   uv run python scripts/run_capacity_ablation.py --ablation converged_quotient_lr1e3
+
+defaults:
+  - override /hydra/sweeper: basic
+  - override /hydra/launcher: joblib
+
+hydra:
+  mode: "MULTIRUN"
+  launcher:
+    n_jobs: 6
+  sweeper:
+    params:
+      experiment: converged_protocol
+      model: klein_vae,torus_vae
+      arch: official
+      seed: 27,28,29
+      model.lr: 0.001
+
+logger:
+  wandb:
+    group: converged-protocol-lr1e3
+    name: "${model_name}-d${model.model.latent_dim}-s${seed}-lr1e3"
+    offline: True

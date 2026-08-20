@@ -4,6 +4,8 @@ from typing import Literal
 import torch
 from torch import nn
 
+from src.models.components.latent_features import LatentFeatureMap
+
 CovarianceType = Literal["isotropic", "diagonal", "full"]
 
 # Bound for encoder outputs that are expontiated to remove overflow.
@@ -19,6 +21,7 @@ class SimpleVAE(nn.Module):
         hidden_dims: Sequence[int] | None = None,
         latent_dim: int = 2,
         covariance_type: CovarianceType = "full",
+        latent_feature_map: LatentFeatureMap | None = None,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -30,6 +33,9 @@ class SimpleVAE(nn.Module):
 
         self.input_dim = input_dim
         self.latent_dim = latent_dim
+        # Fixed lift applied before decoding so the decoder is continuous on the quotient.
+        self.latent_feature_map = latent_feature_map
+        self.decoder_input_dim = latent_dim if latent_feature_map is None else latent_feature_map.output_dim
         self.hidden_dims = list(hidden_dims) if hidden_dims is not None else [16, 32, 64]
         self.covariance_type = covariance_type
 
@@ -49,7 +55,7 @@ class SimpleVAE(nn.Module):
         self.encoder = nn.Sequential(*encoder_layers)
 
         decoder_layers: list[nn.Module] = []
-        previous_dim = latent_dim
+        previous_dim = self.decoder_input_dim
         for hidden_dim in reversed(self.hidden_dims):
             decoder_layers.extend((nn.Linear(previous_dim, hidden_dim), nn.LeakyReLU()))
             previous_dim = hidden_dim
@@ -106,7 +112,12 @@ class SimpleVAE(nn.Module):
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
 
-        return self.decoder(z)
+        return self.decoder(self.decoder_input(z))
+
+    def decoder_input(self, z: torch.Tensor) -> torch.Tensor:
+        """Apply the latent feature map, if one is configured."""
+
+        return z if self.latent_feature_map is None else self.latent_feature_map(z)
 
     def decode_probabilities(self, z: torch.Tensor) -> torch.Tensor:
         """Return per-pixel Bernoulli means in ``[0, 1]`` for visualization."""

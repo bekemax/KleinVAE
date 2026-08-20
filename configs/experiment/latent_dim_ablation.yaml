@@ -1,0 +1,14 @@
+# @package _global_
+#
+# How many Euclidean latent dimensions it takes to match a 2-d quotient latent.
+
+defaults:
+  - capacity_ablation
+
+tags: ["paper", "latent-dim-ablation"]
+
+model:
+  lr: 0.0003
+
+trainer:
+  max_epochs: 500
