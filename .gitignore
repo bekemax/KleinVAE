@@ -175,3 +175,6 @@ unsorted/
 *raw/
 .wandb_backfill/
 results/
+
+# README figure assets
+!/docs/figures/*.png

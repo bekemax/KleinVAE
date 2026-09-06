@@ -1,150 +1,110 @@
 # KleinVAE
 
-Code and experiments for
-[*Reparameterization through Coverings and Topological Weight Priors*](https://arxiv.org/abs/2604.23804).
+KleinVAE studies how to give a variational autoencoder a prescribed latent
+geometry. It compares a Klein-bottle latent space with a torus and a Euclidean
+plane on the synthetic Klein-Circles image dataset.
 
-KleinVAE uses a covering map and a topological weight prior to construct a
-variational autoencoder with a Klein-bottle latent space. The repository also
-contains TorusVAE and Euclidean VAE baselines.
+The encoder defines a Gaussian on a covering plane. Samples are mapped onto
+the chosen surface before decoding, while the KL term is computed on the plane.
+In the current implementation, invariant decoder features respect the surface’s
+edge identifications.
 
-## Notebook
+<p align="center">
+  <img src="docs/figures/double-cover.svg" width="720" alt="Two-sheeted covering of the Klein bottle by the torus: points x₁ and x₂ map to the same point y; arrows indicate edge identifications.">
+</p>
 
-[`notebooks/KleinVAE.ipynb`](notebooks/KleinVAE.ipynb) contains the complete
-Klein-Circles experiment:
+The torus is a two-sheeted cover of the Klein bottle: `x₁` and `x₂` map to
+the same point `y`. Matching arrows indicate how edges are identified; the
+dashed line divides the torus fundamental domain into two halves.
 
-- deterministic data generation and train/validation/test splitting;
-- KleinVAE, TorusVAE, and Euclidean VAE training;
-- lowest-validation-loss checkpoint selection;
-- reconstruction, negative ELBO, and latent-variance logging;
-- quotient-aware persistent-homology evaluation;
-- result tables and figures;
-- Appendix Figures 5 and 6.
+## Learning Klein-Circles
 
-The three models are trained and evaluated with seed 28. No seed sweep is run.
+Klein-Circles consists of 100,000 binary 30×30 images of a circle of radius 0.3.
+Its center is sampled uniformly on a unit square whose edges are identified as
+a Klein bottle. A circle crossing an edge continues across its paired edge,
+with a flip at the vertical boundary.
 
-## Results
+<p align="center">
+  <img src="docs/figures/circles-2.png" width="1000" alt="Klein-Circles examples on the left and their KleinVAE reconstructions on the right, with arrows marking edge identifications.">
+</p>
 
-| Model | Reconstruction NLL | Negative ELBO / bound | H1/H2 bottleneck | Log empirical latent variance |
-|---|---:|---:|---:|---:|
-| KleinVAE | 62.22 | 76.68 | 0.1261 | -1.8478 |
-| TorusVAE | 121.03 | 132.61 | 0.1455 | -1.1975 |
-| Euclidean VAE | 20.46 | 31.98 | 0.1876 | 1.4314 |
+**Left:** binary Klein-Circles images. **Right:** their KleinVAE reconstructions.
+The grid shows how images change as the circle center moves; arrows mark the
+edge identifications. White denotes intensity 1 and black intensity 0.
 
-![KleinVAE experiment results](results/klein_circles/comparison.png)
+The curves below show a comparison of the three models over 300 epochs at
+seed 27, using the same hidden widths `[1024, 512, 128, 32]` and
+two-dimensional latent spaces.
 
-KleinVAE gives a 32.8% lower intrinsic H1/H2 bottleneck score than the
-Euclidean VAE in this run. The Euclidean VAE gives the lower reconstruction
-NLL.
+### Reconstruction and latent codes
 
-![Training curves](results/klein_circles/training_curves.png)
+<table>
+  <tr>
+    <td width="50%"><img src="docs/figures/recon_loss_official.png" alt="Reconstruction NLL over 300 epochs for KleinVAE, TorusVAE, and Euclidean VAE."></td>
+    <td width="50%"><img src="docs/figures/var_z_official.png" alt="Empirical variance of latent codes over 300 epochs; Euclidean codes have the largest spread, followed by torus and Klein-bottle codes."></td>
+  </tr>
+</table>
 
-## Installation
+**Reconstruction.** Pixel-summed Bernoulli negative log-likelihood (NLL) measures
+how well decoded images match their inputs; lower is better. In this run,
+Euclidean VAE reaches the lowest loss, followed by KleinVAE and TorusVAE.
+
+**Latent spread.** Euclidean codes spread more widely than torus and
+Klein-bottle codes. This variance depends on the coordinates and domain, so a
+smaller value alone does not imply a better representation. Both plots use
+logarithmic vertical scales.
+
+### Reconstruction topology
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/figures/bottleneck_z2_official.png" alt="Norm of reconstruction bottleneck distances over Z2, evaluated every 60 epochs."></td>
+    <td width="50%"><img src="docs/figures/bottleneck_z3_official.png" alt="Norm of reconstruction bottleneck distances over Z3, evaluated every 60 epochs."></td>
+  </tr>
+</table>
+
+These curves compare persistence diagrams of 400 input images with those of
+their reconstructions. Each score is the L2 norm of the bottleneck distances
+in homology degrees 0, 1, and 2; lower means closer reconstruction topology.
+The two coefficient fields, `Z/2` and `Z/3`, reveal different homological
+features of the Klein bottle, so both are evaluated.
+
+By the end of this run, KleinVAE and Euclidean VAE reach similar reconstruction
+topology scores over both fields, while TorusVAE remains higher. These scores
+measure the reconstructed images; they do not determine the topology of the
+model's latent domain.
+
+## Try it
+
+Requires **Python 3.13 or newer** and **uv**. From the repository root:
 
 ```bash
 uv sync
 ```
 
-Run the tests with:
+Run a small, one-epoch example on CPU:
+
+```bash
+uv run python main.py experiment=invariant_decoder arch=tiny logger=csv \
+  data.num_images=64 data.batch_size=16 \
+  trainer.min_epochs=1 trainer.max_epochs=1
+```
+
+The dataset is generated locally, and metrics and checkpoints are saved under
+`logs/`. No external account is needed.
+
+For a full training run with the current implementation:
+
+```bash
+uv run python main.py experiment=invariant_decoder arch=official logger=csv
+```
+
+Use `model=torus_vae` or `model=vanilla_vae` to try the other latent spaces.
+The current configuration uses invariant decoder features and early stopping;
+this command is not an exact reproduction of the fixed-length run shown above.
+
+To run the tests:
 
 ```bash
 uv run pytest
-```
-
-Execute the notebook with the saved results:
-
-```bash
-uv run python scripts/run_notebook.py
-```
-
-Train all three models and run the complete evaluation:
-
-```bash
-KLEINVAE_RUN_TRAINING=1 uv run python scripts/run_notebook.py
-```
-
-The training run writes checkpoints and CSV metrics below
-`logs/klein_circles_seed28/`. Result tables and figures are written to
-`results/klein_circles/`.
-
-## Experiment configuration
-
-[`configs/experiment/klein_circles.yaml`](configs/experiment/klein_circles.yaml)
-defines:
-
-- 100,000 binary 30×30 Klein-Circles images with radius 0.3;
-- an 80/10/10 train, validation, and test split;
-- the same `900 → 1024 → 512 → 128 → 32 → 5` encoder and reversed decoder for
-  all models;
-- a two-dimensional latent space with full 2×2 posterior covariance;
-- Adam with learning rate `1e-3`;
-- batch size 1024 and 50 epochs;
-- pixel-summed Bernoulli reconstruction NLL;
-- KL weight 1.
-
-Hydra stores the resolved configuration and seed for every run. The CSV logger
-records the following epoch-level quantities:
-
-| Metric | Definition |
-|---|---|
-| `recon_nll` | Pixel-summed Bernoulli negative log-likelihood per observation. |
-| `kl` | Gaussian KL for Euclidean VAE and cover-space KL bound for KleinVAE/TorusVAE. |
-| `negative_elbo` | Posterior reconstruction estimate plus KL. |
-| `posterior_log_variance` | Mean `log(diag(Σq(x)))` produced by the encoder. |
-| `latent_code_variance` | Sum of coordinate variances of projected posterior samples. |
-| `log_latent_code_variance` | Natural logarithm of empirical latent-code variance. |
-
-## Capacity ablation
-
-The capacity grid varies MLP width, seed, and Euclidean latent dimension.
-It can be run via Hydra multirun sweep:
-
-```bash
-uv run python main.py -m hparams_search=capacity_ablation
-```
-
-Or using the Python runner, which also collects every run into
-`results/<ablation>/results.csv`:
-
-```bash
-uv run python scripts/run_capacity_ablation.py --ablation capacity_ablation
-```
-
-| `arch` | Hidden dimensions | 2D / 3D / 4D parameters |
-|---|---|---:|
-| `tiny` | `[64]` | 116,681 / 117,005 / 117,394 |
-| `small` | `[256, 64]` | 495,561 / 495,885 / 496,274 |
-| `official` | `[1024, 512, 128, 32]` | 3,035,561 / 3,035,725 / 3,035,922 |
-
-All models use a 2D latent. Euclidean VAE additionally uses 3D and 4D latents,
-giving 45 runs across seeds 27, 28, and 29. Full-covariance encoder heads have
-width 5, 9, and 14 for latent dimensions 2, 3, and 4 respectively.
-
-Checkpoints land in `logs/capacity_ablation/seed{seed}/{arch}/{model}/`; 3D and
-4D Euclidean runs add `latent_dim_{n}/`. Evaluation writes the consolidated
-`results/capacity_ablation/results.csv`.
-
-## Appendix figures
-
-The notebook also generates Figures 5 and 6 from the exported curves in
-[`data/appendix`](data/appendix). They can be generated directly with:
-
-```bash
-uv run python scripts/plot_appendix.py
-```
-
-## Repository structure
-
-```text
-configs/experiment/klein_circles.yaml  training configuration
-configs/experiment/capacity_ablation.yaml  MLP-width ablation
-data/appendix/                          exported appendix curves
-notebooks/KleinVAE.ipynb               complete experiment notebook
-results/klein_circles/                 single-run results and figures
-results/appendix/                       appendix figures and metadata
-scripts/evaluate_checkpoint.py         checkpoint evaluation
-scripts/plot_appendix.py                appendix figure generation
-scripts/run_capacity_ablation.py        width-ablation train and collect
-scripts/run_notebook.py                 notebook execution
-src/                                    datasets, models, callbacks, and metrics
-tests/                                  unit and integration tests
 ```
