@@ -108,3 +108,20 @@ To run the tests:
 ```bash
 uv run pytest
 ```
+
+
+## Cite
+```@article{Beketov2026,
+  title = {Reparameterization through coverings and topological weight priors},
+  volume = {2},
+  ISSN = {3066-4314},
+  url = {http://dx.doi.org/10.4310/DAT.260831104503},
+  DOI = {10.4310/dat.260831104503},
+  number = {1},
+  journal = {Data Analytics and Topology},
+  publisher = {International Press of Boston},
+  author = {Beketov,  Maxim and Snopov,  Pavel},
+  year = {2026},
+  pages = {41–51}
+}
+```
